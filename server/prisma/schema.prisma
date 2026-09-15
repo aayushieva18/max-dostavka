@@ -1,0 +1,72 @@
+// Схема базы данных. Один источник правды о том, какие данные хранит сервер.
+// Postgres в интернете (Neon) — переехали с локального файла SQLite, чтобы
+// данные не терялись при переносе сервера на хостинг. Строка подключения
+// (с паролем) — в server/.env, который не хранится в общем доступе.
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Товар и остаток, доступный к заказу прямо сейчас.
+model Product {
+  id            Int         @id @default(autoincrement())
+  name          String
+  // Сколько доступно к заказу. Хозяйка обновляет перед выездом.
+  // Уменьшается при каждом подтверждённом заказе, не может уйти в минус.
+  availableQty  Int         @default(0)
+  orderItems    OrderItem[]
+}
+
+// Покупатель — идентифицируется по id в MAX, чтобы имя/адрес/телефон
+// подставлялись сами при повторном заказе (DeviceStorage на клиенте это
+// дублирует, сервер — вторая, надёжная копия тех же данных).
+model Customer {
+  id         Int      @id @default(autoincrement())
+  maxUserId  String   @unique
+  name       String
+  address    String
+  phone      String
+  orders     Order[]
+  updatedAt  DateTime @updatedAt
+}
+
+enum OrderStatus {
+  NEW          // только что оформлен
+  ON_THE_WAY   // хозяйка выехала (по факту — просто "не выдан")
+  DELIVERED    // хозяйка нажала "заказ выдал"
+  PICKED_UP    // покупатель нажал "заказ забрал"
+}
+
+model Order {
+  id          Int         @id @default(autoincrement())
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  customerId  Int
+  // Имя/адрес/телефон СНИМКОМ на момент именно этого заказа — не берём их
+  // через customer напрямую, потому что у Customer это текущие данные и они
+  // перезаписываются при каждом новом заказе того же покупателя (иначе все
+  // его старые заказы в списке показывали бы последний введённый адрес).
+  name        String
+  address     String
+  phone       String
+  status      OrderStatus @default(NEW)
+  // Координаты точки доставки (адрес геокодируется на клиенте при оформлении
+  // заказа и сохраняется, чтобы не гадать по текстовому адресу).
+  lat         Float
+  lon         Float
+  items       OrderItem[]
+  createdAt   DateTime    @default(now())
+}
+
+model OrderItem {
+  id        Int     @id @default(autoincrement())
+  order     Order   @relation(fields: [orderId], references: [id])
+  orderId   Int
+  product   Product @relation(fields: [productId], references: [id])
+  productId Int
+  quantity  Int
+}

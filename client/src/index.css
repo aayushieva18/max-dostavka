@@ -1,0 +1,221 @@
+:root {
+  --text: #1c1c1e;
+  --text-muted: #6b7280;
+  --bg: #f5f5f7;
+  --card-bg: #ffffff;
+  --border: #e5e5ea;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --danger-bg: #fee2e2;
+  --danger-text: #991b1b;
+  font: 16px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  max-width: 480px;
+  margin: 0 auto;
+  min-height: 100svh;
+  padding: 16px;
+  padding-bottom: 48px;
+}
+
+.screen-title {
+  font-size: 22px;
+  font-weight: 600;
+  margin: 4px 0 16px;
+}
+
+.card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.card-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.field {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.field-label {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 15px;
+  background: var(--card-bg);
+  color: var(--text);
+}
+
+.input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.button {
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: none;
+  font-size: 15px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.button-primary {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.button-secondary {
+  background: var(--border);
+  color: var(--text);
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.row > .input {
+  flex: 1;
+}
+
+.qty-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.qty-picker-value {
+  min-width: 20px;
+  text-align: center;
+  font-weight: 500;
+}
+
+.error-banner {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
+  max-width: 448px;
+  margin: 0 auto;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 14px;
+  z-index: 1000;
+}
+
+.error-banner-close {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 900;
+}
+
+.modal-card {
+  background: var(--card-bg);
+  border-radius: 16px 16px 0 0;
+  padding: 20px 16px;
+  width: 100%;
+  max-width: 480px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.list-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+.list-item-title {
+  font-weight: 500;
+}
+
+.list-item-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.address-suggestions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  z-index: 10;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.address-suggestion-item {
+  padding: 10px 12px;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.address-suggestion-item:hover {
+  background: var(--bg);
+}
