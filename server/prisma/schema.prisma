@@ -12,9 +12,29 @@ generator client {
   provider = "prisma-client-js"
 }
 
+// Курьер — отдельный человек/бизнес со своим списком товаров и заказов,
+// не видит и не пересекается с другими курьерами. У каждого курьера своя
+// ссылка для покупателей (по slug) и свой пароль для входа на свой экран
+// (ownerToken, сверяется в заголовке x-owner-token).
+model Courier {
+  id         Int        @id @default(autoincrement())
+  // Публичный, не секретный кусок ссылки для покупателей: ?courier=<slug>.
+  slug       String     @unique
+  name       String
+  // Секретный пароль для входа именно этого курьера — по нему же сервер
+  // узнаёт, какого курьера показывать, отдельный slug для входа не нужен.
+  ownerToken String     @unique
+  createdAt  DateTime   @default(now())
+  products   Product[]
+  customers  Customer[]
+  orders     Order[]
+}
+
 // Товар и остаток, доступный к заказу прямо сейчас.
 model Product {
   id            Int         @id @default(autoincrement())
+  courier       Courier     @relation(fields: [courierId], references: [id])
+  courierId     Int
   name          String
   // Сколько доступно к заказу. Хозяйка обновляет перед выездом.
   // Уменьшается при каждом подтверждённом заказе, не может уйти в минус.
@@ -26,17 +46,22 @@ model Product {
   orderItems    OrderItem[]
 }
 
-// Покупатель — идентифицируется по id в MAX, чтобы имя/адрес/телефон
-// подставлялись сами при повторном заказе (DeviceStorage на клиенте это
+// Покупатель — идентифицируется по id в MAX (или случайному id браузера)
+// в паре с конкретным курьером, чтобы имя/адрес/телефон подставлялись сами
+// при повторном заказе именно У ЭТОГО курьера (DeviceStorage на клиенте это
 // дублирует, сервер — вторая, надёжная копия тех же данных).
 model Customer {
   id         Int      @id @default(autoincrement())
-  maxUserId  String   @unique
+  courier    Courier  @relation(fields: [courierId], references: [id])
+  courierId  Int
+  maxUserId  String
   name       String
   address    String
   phone      String
   orders     Order[]
   updatedAt  DateTime @updatedAt
+
+  @@unique([courierId, maxUserId])
 }
 
 enum OrderStatus {
@@ -48,6 +73,8 @@ enum OrderStatus {
 
 model Order {
   id          Int         @id @default(autoincrement())
+  courier     Courier     @relation(fields: [courierId], references: [id])
+  courierId   Int
   customer    Customer    @relation(fields: [customerId], references: [id])
   customerId  Int
   // Имя/адрес/телефон СНИМКОМ на момент именно этого заказа — не берём их

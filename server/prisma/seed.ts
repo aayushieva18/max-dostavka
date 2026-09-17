@@ -1,19 +1,27 @@
-// Наполняет базу примерами товаров при первом запуске, чтобы было на чём
-// проверить работу приложения. Реальные товары хозяйка потом заводит сама
-// (через экран курьера — там появится форма добавления товара на следующем шаге).
+// Наполняет ПУСТУЮ локальную базу тестовым курьером и примерами товаров,
+// чтобы было на чём проверить работу приложения. Реальные курьеры заводятся
+// через server/scripts/create-courier.ts, реальные товары — через экран
+// курьера в самом приложении.
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 async function main() {
-  const existing = await prisma.product.count();
+  const existing = await prisma.courier.count();
   if (existing > 0) return;
 
-  await prisma.product.createMany({
-    data: [
-      { name: "Продукт А", availableQty: 10 },
-      { name: "Продукт Б", availableQty: 5 },
-    ],
+  await prisma.courier.create({
+    data: {
+      slug: "test",
+      name: "Тестовый курьер",
+      ownerToken: "test-owner-token",
+      products: {
+        create: [
+          { name: "Продукт А", availableQty: 10 },
+          { name: "Продукт Б", availableQty: 5 },
+        ],
+      },
+    },
   });
 }
 

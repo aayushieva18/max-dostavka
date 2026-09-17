@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Order, type Product } from "../lib/api";
-import { socket } from "../lib/socket";
+import { socket, connectAsCustomer } from "../lib/socket";
 import {
   getMaxUserFirstName,
   loadCustomerFromDeviceStorage,
@@ -12,7 +12,7 @@ import { AddressInput } from "../components/AddressInput";
 import { geocodeAddress } from "../lib/yandexMaps";
 import { Screen, Card, Field, Input, Button, Muted, ErrorBanner } from "../components/ui";
 
-type Props = { maxUserId: string };
+type Props = { courierSlug: string; maxUserId: string };
 
 // Адрес хранится одной строкой "Населённый пункт, улица и дом" — здесь же
 // на экране это два отдельных поля, чтобы человек физически не мог забыть
@@ -31,7 +31,7 @@ function joinAddress(settlement: string, street: string): string {
   return `${settlement.trim()}, ${street.trim()}`;
 }
 
-export function CustomerScreen({ maxUserId }: Props) {
+export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [products, setProducts] = useState<Product[]>([]);
   const [name, setName] = useState(getMaxUserFirstName());
   const [settlement, setSettlement] = useState("");
@@ -46,11 +46,12 @@ export function CustomerScreen({ maxUserId }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
 
-  // Подставляем данные покупателя, если он уже когда-то заказывал:
-  // сначала пробуем сервер (главный источник), потом хранилище MAX (резерв).
+  // Подставляем данные покупателя, если он уже когда-то заказывал именно у
+  // этого курьера: сначала пробуем сервер (главный источник), потом
+  // хранилище MAX (резерв).
   useEffect(() => {
     (async () => {
-      const fromServer = await api.getCustomer(maxUserId).catch(() => null);
+      const fromServer = await api.getCustomer(courierSlug, maxUserId).catch(() => null);
       if (fromServer) {
         setName(fromServer.name);
         const parsed = splitAddress(fromServer.address);
@@ -68,16 +69,23 @@ export function CustomerScreen({ maxUserId }: Props) {
         setPhone(fromStorage.phone);
       }
     })();
-  }, [maxUserId]);
+  }, [courierSlug, maxUserId]);
 
   useEffect(() => {
-    api.getProducts().then(setProducts).catch(() => setError("Не получилось загрузить список товаров"));
-    const reload = () => api.getProducts().then(setProducts).catch(() => {});
+    connectAsCustomer(courierSlug);
+    return () => {
+      socket.disconnect();
+    };
+  }, [courierSlug]);
+
+  useEffect(() => {
+    api.getProducts(courierSlug).then(setProducts).catch(() => setError("Не получилось загрузить список товаров"));
+    const reload = () => api.getProducts(courierSlug).then(setProducts).catch(() => {});
     socket.on("products:updated", reload);
     return () => {
       socket.off("products:updated", reload);
     };
-  }, []);
+  }, [courierSlug]);
 
   useEffect(() => {
     socket.on("courier:position", setCourierPosition);
@@ -120,6 +128,7 @@ export function CustomerScreen({ maxUserId }: Props) {
       }
 
       const order = await api.createOrder({
+        courierSlug,
         maxUserId,
         name,
         address,
@@ -146,7 +155,7 @@ export function CustomerScreen({ maxUserId }: Props) {
 
   async function handlePickedUp() {
     if (!activeOrder) return;
-    const updated = await api.markPickedUp(activeOrder.id);
+    const updated = await api.markPickedUp(courierSlug, activeOrder.id);
     setActiveOrder(updated);
   }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, type Order, type Product } from "../lib/api";
-import { socket } from "../lib/socket";
+import { api, type Me, type Order, type Product } from "../lib/api";
+import { socket, connectAsOwner } from "../lib/socket";
+import { getOwnerToken } from "../lib/ownerAuth";
 import { MapView } from "../components/MapView";
 import { buildDeliveryRoute, type RouteResult } from "../lib/route";
 import { build2gisRouteLink } from "../lib/twogis";
@@ -8,6 +9,7 @@ import { compressImage } from "../lib/image";
 import { Screen, Card, Input, Button, Muted, Modal } from "../components/ui";
 
 export function CourierScreen() {
+  const [me, setMe] = useState<Me | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
@@ -24,21 +26,38 @@ export function CourierScreen() {
   const [addingProduct, setAddingProduct] = useState(false);
   const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
 
-  function reloadProducts() {
-    api.getProducts().then(setProducts).catch(() => {});
+  // Узнаём, кто мы сами (название, slug для ссылки покупателям) — токен
+  // пароля уже подтверждён на экране входа (OwnerGate).
+  useEffect(() => {
+    api.getMe().then(setMe).catch(() => {});
+  }, []);
+
+  function reloadProducts(slug: string) {
+    api.getProducts(slug).then(setProducts).catch(() => {});
   }
   function reloadOrders() {
     api.getOrders().then(setOrders).catch(() => {});
   }
 
   useEffect(() => {
-    reloadProducts();
+    if (!me) return;
+    reloadProducts(me.slug);
     reloadOrders();
-    socket.on("products:updated", reloadProducts);
+    const onProducts = () => reloadProducts(me.slug);
+    socket.on("products:updated", onProducts);
     socket.on("orders:updated", reloadOrders);
     return () => {
-      socket.off("products:updated", reloadProducts);
+      socket.off("products:updated", onProducts);
       socket.off("orders:updated", reloadOrders);
+    };
+  }, [me]);
+
+  useEffect(() => {
+    const token = getOwnerToken();
+    if (!token) return;
+    connectAsOwner(token);
+    return () => {
+      socket.disconnect();
     };
   }, []);
 
@@ -146,8 +165,18 @@ export function CourierScreen() {
     setSelectedOrder(null);
   }
 
+  const customerLink = me
+    ? `${window.location.origin}${window.location.pathname}?courier=${me.slug}`
+    : null;
+
   return (
-    <Screen title="Заказы на сегодня">
+    <Screen title={me ? me.name : "Заказы на сегодня"}>
+      {customerLink && (
+        <Card title="Ссылка для покупателей">
+          <Muted>{customerLink}</Muted>
+        </Card>
+      )}
+
       <Card title="Карта заказов">
         <MapView
           center={

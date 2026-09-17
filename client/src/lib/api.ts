@@ -39,6 +39,8 @@ export type Order = {
   items: OrderItem[];
 };
 
+export type Me = { id: number; slug: string; name: string };
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${SERVER_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -69,7 +71,10 @@ async function ownerRequest<T>(path: string, options?: RequestInit): Promise<T> 
 }
 
 export const api = {
-  getProducts: () => request<Product[]>("/api/products"),
+  getMe: () => ownerRequest<Me>("/api/me"),
+
+  getProducts: (courierSlug: string) =>
+    request<Product[]>(`/api/products?courier=${encodeURIComponent(courierSlug)}`),
 
   createProduct: (name: string, availableQty: number, imageUrl?: string | null) =>
     ownerRequest<Product>("/api/products", {
@@ -95,12 +100,15 @@ export const api = {
       body: JSON.stringify({ availableQty }),
     }),
 
-  getCustomer: (maxUserId: string) =>
-    request<Customer>(`/api/customers/${maxUserId}`),
+  getCustomer: (courierSlug: string, maxUserId: string) =>
+    request<Customer>(
+      `/api/customers/${maxUserId}?courier=${encodeURIComponent(courierSlug)}`
+    ),
 
   getOrders: () => ownerRequest<Order[]>("/api/orders"),
 
   createOrder: (data: {
+    courierSlug: string;
     maxUserId: string;
     name: string;
     address: string;
@@ -111,12 +119,15 @@ export const api = {
   }) =>
     request<Order>("/api/orders", {
       method: "POST",
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, courier: data.courierSlug }),
     }),
 
   markDelivered: (orderId: number) =>
     ownerRequest<Order>(`/api/orders/${orderId}/delivered`, { method: "POST" }),
 
-  markPickedUp: (orderId: number) =>
-    request<Order>(`/api/orders/${orderId}/picked-up`, { method: "POST" }),
+  markPickedUp: (courierSlug: string, orderId: number) =>
+    request<Order>(
+      `/api/orders/${orderId}/picked-up?courier=${encodeURIComponent(courierSlug)}`,
+      { method: "POST" }
+    ),
 };

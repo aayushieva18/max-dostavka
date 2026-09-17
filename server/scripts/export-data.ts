@@ -7,17 +7,18 @@ import { writeFileSync } from "fs";
 const prisma = new PrismaClient();
 
 async function main() {
-  const [products, customers, orders] = await Promise.all([
+  const [couriers, products, customers, orders] = await Promise.all([
+    prisma.courier.findMany(),
     prisma.product.findMany(),
     prisma.customer.findMany(),
     prisma.order.findMany({ include: { items: true } }),
   ]);
 
-  const dump = { products, customers, orders };
+  const dump = { couriers, products, customers, orders };
   writeFileSync("data-export.json", JSON.stringify(dump, null, 2), "utf-8");
 
   console.log(
-    `Сохранено: ${products.length} товаров, ${customers.length} покупателей, ${orders.length} заказов → server/data-export.json`
+    `Сохранено: ${couriers.length} курьеров, ${products.length} товаров, ${customers.length} покупателей, ${orders.length} заказов → server/data-export.json`
   );
 }
 

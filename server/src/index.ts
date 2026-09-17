@@ -1,7 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { createServer } from "http";
-import { Server } from "socket.io";
+import { Server, type Socket } from "socket.io";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -23,25 +23,65 @@ app.use((_req, res, next) => {
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
-// Список заказов и управление товарами — это данные и действия хозяйки
+// --- Курьеры (многокурьерность) -----------------------------------------
+// Каждый курьер видит только свои товары, покупателей и заказы. У курьера
+// свой пароль (ownerToken) для входа на свой экран и свой публичный slug
+// для ссылки покупателям (?courier=slug) — не секрет, можно давать всем.
+
+declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
+  namespace Express {
+    interface Request {
+      courierId?: number;
+    }
+  }
+}
+
+// Список заказов и управление товарами — это данные и действия курьера
 // (имена/адреса/телефоны покупателей, изменение остатков), а не покупателей.
 // Раньше эти пути были открыты вообще без проверки — любой человек с
-// адресом сервера мог посмотреть все заказы. Закрываем секретным словом,
-// которое знает только хозяйка (передаётся в заголовке x-owner-token).
-function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+// адресом сервера мог посмотреть все заказы. Закрываем секретным паролем;
+// заодно по этому паролю сервер узнаёт, КАКОГО именно курьера показывать.
+async function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
   const token = req.header("x-owner-token");
-  if (!process.env.OWNER_SECRET || token !== process.env.OWNER_SECRET) {
+  const courier = token ? await prisma.courier.findUnique({ where: { ownerToken: token } }) : null;
+  if (!courier) {
     res.status(401).json({ error: "Неверный пароль хозяйки" });
     return;
   }
+  req.courierId = courier.id;
   next();
 }
 
+// Покупательские запросы указывают курьера открыто, по slug из ссылки
+// (?courier=slug) — это не секрет, просто адрес конкретной витрины.
+async function resolveCourierBySlug(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const slug = (req.query.courier as string) || (req.body?.courier as string);
+  const courier = slug ? await prisma.courier.findUnique({ where: { slug } }) : null;
+  if (!courier) {
+    res.status(404).json({ error: "Такой ссылки для заказа не существует" });
+    return;
+  }
+  req.courierId = courier.id;
+  next();
+}
+
+// Данные о самом курьере (свой slug/название) — нужно клиенту, чтобы знать,
+// в какую "комнату" сокета подключаться, и что показать в шапке экрана.
+app.get("/api/me", requireOwner, async (req, res) => {
+  const courier = await prisma.courier.findUniqueOrThrow({ where: { id: req.courierId } });
+  res.json({ id: courier.id, slug: courier.slug, name: courier.name });
+});
+
 // --- Товары и остатки -------------------------------------------------
 
-// Список товаров, доступных к заказу прямо сейчас (availableQty > 0).
-app.get("/api/products", async (_req, res) => {
-  const products = await prisma.product.findMany({ orderBy: { id: "asc" } });
+// Список товаров, доступных к заказу прямо сейчас (availableQty > 0),
+// у конкретного курьера.
+app.get("/api/products", resolveCourierBySlug, async (req, res) => {
+  const products = await prisma.product.findMany({
+    where: { courierId: req.courierId },
+    orderBy: { id: "asc" },
+  });
   res.json(products);
 });
 
@@ -58,9 +98,14 @@ app.post("/api/products", requireOwner, async (req, res) => {
     return;
   }
   const product = await prisma.product.create({
-    data: { name: name.trim(), availableQty: availableQty ?? 0, imageUrl: imageUrl ?? null },
+    data: {
+      courierId: req.courierId!,
+      name: name.trim(),
+      availableQty: availableQty ?? 0,
+      imageUrl: imageUrl ?? null,
+    },
   });
-  io.emit("products:updated");
+  io.to(courierRoom(req.courierId!)).emit("products:updated");
   res.json(product);
 });
 
@@ -69,10 +114,10 @@ app.post("/api/products/:id/image", requireOwner, async (req, res) => {
   const id = Number(req.params.id);
   const { imageUrl } = req.body as { imageUrl: string | null };
   const product = await prisma.product.update({
-    where: { id },
+    where: { id, courierId: req.courierId },
     data: { imageUrl },
   });
-  io.emit("products:updated");
+  io.to(courierRoom(req.courierId!)).emit("products:updated");
   res.json(product);
 });
 
@@ -85,10 +130,10 @@ app.post("/api/products/:id/rename", requireOwner, async (req, res) => {
     return;
   }
   const product = await prisma.product.update({
-    where: { id },
+    where: { id, courierId: req.courierId },
     data: { name: name.trim() },
   });
-  io.emit("products:updated");
+  io.to(courierRoom(req.courierId!)).emit("products:updated");
   res.json(product);
 });
 
@@ -98,20 +143,20 @@ app.post("/api/products/:id/stock", requireOwner, async (req, res) => {
   const id = Number(req.params.id);
   const { availableQty } = req.body as { availableQty: number };
   const product = await prisma.product.update({
-    where: { id },
+    where: { id, courierId: req.courierId },
     data: { availableQty },
   });
-  io.emit("products:updated");
+  io.to(courierRoom(req.courierId!)).emit("products:updated");
   res.json(product);
 });
 
 // --- Покупатель: данные для повторного заказа --------------------------
 
-// Возвращает сохранённые имя/адрес/телефон покупателя по его id в MAX,
-// если он уже когда-то заказывал. Иначе — пусто, покупатель вводит сам.
-app.get("/api/customers/:maxUserId", async (req, res) => {
+// Возвращает сохранённые имя/адрес/телефон покупателя (у конкретного
+// курьера) по его id в MAX, если он уже когда-то заказывал именно у него.
+app.get("/api/customers/:maxUserId", resolveCourierBySlug, async (req, res) => {
   const customer = await prisma.customer.findUnique({
-    where: { maxUserId: req.params.maxUserId },
+    where: { courierId_maxUserId: { courierId: req.courierId!, maxUserId: String(req.params.maxUserId) } },
   });
   res.json(customer);
 });
@@ -121,7 +166,8 @@ app.get("/api/customers/:maxUserId", async (req, res) => {
 // Оформление заказа. Проверяет остатки на каждый товар и отклоняет
 // заказ целиком, если чего-то уже не хватает (чтобы не разъезжались
 // "частично оформленные" заказы).
-app.post("/api/orders", async (req, res) => {
+app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
+  const courierId = req.courierId!;
   const { maxUserId, name, address, phone, lat, lon, items } = req.body as {
     maxUserId: string;
     name: string;
@@ -136,7 +182,7 @@ app.post("/api/orders", async (req, res) => {
     const result = await prisma.$transaction(async (tx) => {
       for (const item of items) {
         const product = await tx.product.findUniqueOrThrow({
-          where: { id: item.productId },
+          where: { id: item.productId, courierId },
         });
         if (product.availableQty < item.quantity) {
           throw new Error(`Товара «${product.name}» не хватает в наличии`);
@@ -145,19 +191,20 @@ app.post("/api/orders", async (req, res) => {
 
       for (const item of items) {
         await tx.product.update({
-          where: { id: item.productId },
+          where: { id: item.productId, courierId },
           data: { availableQty: { decrement: item.quantity } },
         });
       }
 
       const customer = await tx.customer.upsert({
-        where: { maxUserId },
+        where: { courierId_maxUserId: { courierId, maxUserId } },
         update: { name, address, phone },
-        create: { maxUserId, name, address, phone },
+        create: { courierId, maxUserId, name, address, phone },
       });
 
       return tx.order.create({
         data: {
+          courierId,
           customerId: customer.id,
           // Снимок имени/адреса/телефона на момент ИМЕННО ЭТОГО заказа —
           // не через customer, потому что его данные перезапишутся при
@@ -173,8 +220,8 @@ app.post("/api/orders", async (req, res) => {
       });
     });
 
-    io.emit("orders:updated");
-    io.emit("products:updated");
+    io.to(courierRoom(courierId)).emit("orders:updated");
+    io.to(courierRoom(courierId)).emit("products:updated");
     res.json(result);
   } catch (e) {
     res.status(400).json({
@@ -185,9 +232,9 @@ app.post("/api/orders", async (req, res) => {
 
 // Заказы на сегодня для экрана хозяйки — с данными покупателя (снимок именно
 // этого заказа, см. комментарий в schema.prisma) и составом.
-app.get("/api/orders", requireOwner, async (_req, res) => {
+app.get("/api/orders", requireOwner, async (req, res) => {
   const orders = await prisma.order.findMany({
-    where: { status: { in: ["NEW", "ON_THE_WAY"] } },
+    where: { courierId: req.courierId, status: { in: ["NEW", "ON_THE_WAY"] } },
     include: { items: { include: { product: true } } },
     orderBy: { createdAt: "asc" },
   });
@@ -197,43 +244,84 @@ app.get("/api/orders", requireOwner, async (_req, res) => {
 // Хозяйка нажала «заказ выдал».
 app.post("/api/orders/:id/delivered", requireOwner, async (req, res) => {
   const order = await prisma.order.update({
-    where: { id: Number(req.params.id) },
+    where: { id: Number(req.params.id), courierId: req.courierId },
     data: { status: "DELIVERED" },
   });
-  io.emit("orders:updated");
+  io.to(courierRoom(req.courierId!)).emit("orders:updated");
   res.json(order);
 });
 
 // Покупатель нажал «заказ забрал».
-app.post("/api/orders/:id/picked-up", async (req, res) => {
+app.post("/api/orders/:id/picked-up", resolveCourierBySlug, async (req, res) => {
   const order = await prisma.order.update({
-    where: { id: Number(req.params.id) },
+    where: { id: Number(req.params.id), courierId: req.courierId },
     data: { status: "PICKED_UP" },
   });
-  io.emit("orders:updated");
+  io.to(courierRoom(req.courierId!)).emit("orders:updated");
   res.json(order);
 });
 
 // --- Живое положение курьера --------------------------------------------
-// Курьер (хозяйка) шлёт своё положение через сокет; сервер рассылает
-// его всем подключённым покупателям. Ничего не хранится в базе — только
-// последнее известное положение в памяти на время работы сервера.
-let courierPosition: { lat: number; lon: number } | null = null;
+// Курьер шлёт своё положение через сокет; сервер рассылает его только
+// подключённым к НЕМУ ЖЕ покупателям (по комнатам socket.io, одна комната
+// на курьера). Ничего не хранится в базе — только последнее известное
+// положение в памяти на время работы сервера.
+function courierRoom(courierId: number) {
+  return `courier:${courierId}`;
+}
 
-io.on("connection", (socket) => {
-  if (courierPosition) socket.emit("courier:position", courierPosition);
+const lastKnownPosition = new Map<number, { lat: number; lon: number }>();
 
-  socket.on("courier:position", (position: { lat: number; lon: number }) => {
-    courierPosition = position;
-    socket.broadcast.emit("courier:position", position);
-  });
+io.on("connection", async (socket: Socket) => {
+  const auth = socket.handshake.auth as { role?: string; token?: string; slug?: string };
 
-  // Хозяйка сама считает маршрут у себя на экране (там же, где карта) и
-  // присылает готовое время прибытия по каждому заказу — сервер просто
-  // разносит эти цифры всем покупателям, ничего не пересчитывает.
-  socket.on("orders:eta", (eta: Record<number, number>) => {
-    socket.broadcast.emit("orders:eta", eta);
-  });
+  let courierId: number | null = null;
+  let isOwnerSocket = false;
+
+  if (auth.role === "owner" && auth.token) {
+    const courier = await prisma.courier.findUnique({ where: { ownerToken: auth.token } });
+    if (courier) {
+      courierId = courier.id;
+      isOwnerSocket = true;
+    }
+  } else if (auth.role === "customer" && auth.slug) {
+    const courier = await prisma.courier.findUnique({ where: { slug: auth.slug } });
+    if (courier) courierId = courier.id;
+  }
+
+  if (!courierId) {
+    socket.disconnect();
+    return;
+  }
+
+  socket.join(courierRoom(courierId));
+
+  const known = lastKnownPosition.get(courierId);
+  if (known) socket.emit("courier:position", known);
+
+  // Только сам курьер (проверенный по паролю выше) может присылать своё
+  // положение и время прибытия — покупательский сокет этого сделать не может,
+  // даже если попробует отправить такое же событие.
+  if (isOwnerSocket) {
+    socket.on("courier:position", (position: { lat: number; lon: number }) => {
+      lastKnownPosition.set(courierId!, position);
+      socket.to(courierRoom(courierId!)).emit("courier:position", position);
+    });
+
+    socket.on("orders:eta", (eta: Record<number, number>) => {
+      socket.to(courierRoom(courierId!)).emit("orders:eta", eta);
+    });
+  }
+});
+
+// Express 5 сам перехватывает отклонённые промисы из async-обработчиков —
+// без этой заглушки такая ошибка ушла бы наружу целой HTML-страницей со
+// стеком вызовов (внутренние пути, номера строк кода). Например, попытка
+// изменить чужой (не своего курьера) товар — так и должно быть отклонено,
+// но пользователю/атакующему не нужно видеть внутренности сервера.
+app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(err);
+  res.status(400).json({ error: "Не удалось выполнить запрос" });
 });
 
 const PORT = Number(process.env.PORT) || 3001;

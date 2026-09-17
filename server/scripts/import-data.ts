@@ -1,6 +1,6 @@
 // Загружает данные из server/data-export.json в базу, на которую сейчас
 // настроен Prisma (см. DATABASE_URL) — используется один раз, при переезде
-// на новую базу в интернете, чтобы вернуть товары/покупателей/заказы.
+// на новую базу в интернете, чтобы вернуть курьеров/товары/покупателей/заказы.
 // Запускать на ПУСТОЙ базе (сразу после первой миграции), иначе будут
 // задвоения.
 import { PrismaClient } from "@prisma/client";
@@ -9,9 +9,11 @@ import { readFileSync } from "fs";
 const prisma = new PrismaClient();
 
 type Dump = {
-  products: { id: number; name: string; availableQty: number }[];
+  couriers: { id: number; slug: string; name: string; ownerToken: string }[];
+  products: { id: number; courierId: number; name: string; availableQty: number; imageUrl: string | null }[];
   customers: {
     id: number;
+    courierId: number;
     maxUserId: string;
     name: string;
     address: string;
@@ -19,6 +21,7 @@ type Dump = {
   }[];
   orders: {
     id: number;
+    courierId: number;
     customerId: number;
     name: string;
     address: string;
@@ -34,6 +37,11 @@ type Dump = {
 async function main() {
   const dump: Dump = JSON.parse(readFileSync("data-export.json", "utf-8"));
 
+  if ((await prisma.courier.count()) === 0) {
+    for (const courier of dump.couriers) {
+      await prisma.courier.create({ data: courier });
+    }
+  }
   if ((await prisma.product.count()) === 0) {
     for (const product of dump.products) {
       await prisma.product.create({ data: product });
@@ -48,6 +56,7 @@ async function main() {
     await prisma.order.create({
       data: {
         id: order.id,
+        courierId: order.courierId,
         customerId: order.customerId,
         name: order.name,
         address: order.address,
@@ -69,14 +78,14 @@ async function main() {
   // Все записи вставлены с их старыми id напрямую — двигаем автосчётчики
   // Postgres вперёд, иначе следующая НОВАЯ запись попробует взять уже
   // занятый номер.
-  for (const table of ["Product", "Customer", "Order", "OrderItem"]) {
+  for (const table of ["Courier", "Product", "Customer", "Order", "OrderItem"]) {
     await prisma.$executeRawUnsafe(
       `SELECT setval(pg_get_serial_sequence('"${table}"', 'id'), COALESCE((SELECT MAX(id) FROM "${table}"), 1))`
     );
   }
 
   console.log(
-    `Загружено: ${dump.products.length} товаров, ${dump.customers.length} покупателей, ${dump.orders.length} заказов`
+    `Загружено: ${dump.couriers.length} курьеров, ${dump.products.length} товаров, ${dump.customers.length} покупателей, ${dump.orders.length} заказов`
   );
 }
 
