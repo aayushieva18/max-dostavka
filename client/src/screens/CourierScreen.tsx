@@ -27,6 +27,10 @@ export function CourierScreen() {
   const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
   const [deliveryFeeDraft, setDeliveryFeeDraft] = useState("");
   const [savingFee, setSavingFee] = useState(false);
+  const [historySearch, setHistorySearch] = useState("");
+  const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   // Узнаём, кто мы сами (название, slug для ссылки покупателям) — токен
   // пароля уже подтверждён на экране входа (OwnerGate).
@@ -176,6 +180,17 @@ export function CourierScreen() {
   async function handleDelivered(orderId: number) {
     await api.markDelivered(orderId);
     setSelectedOrder(null);
+  }
+
+  async function handleSearchHistory() {
+    setLoadingHistory(true);
+    try {
+      const result = await api.getOrderHistory(historySearch);
+      setHistoryOrders(result);
+      setHistoryLoaded(true);
+    } finally {
+      setLoadingHistory(false);
+    }
   }
 
   const customerLink = me
@@ -336,6 +351,42 @@ export function CourierScreen() {
         )}
       </Card>
 
+      <Card title="История заказов">
+        <div className="row">
+          <Input
+            placeholder="Имя или телефон покупателя"
+            value={historySearch}
+            onChange={(e) => setHistorySearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSearchHistory();
+            }}
+          />
+          <Button disabled={loadingHistory} onClick={handleSearchHistory}>
+            Найти
+          </Button>
+        </div>
+        {historyLoaded && historyOrders.length === 0 && (
+          <Muted>Ничего не найдено</Muted>
+        )}
+        {historyOrders.map((order) => {
+          const items = order.items
+            .map((i) => `${i.product.name} × ${i.quantity}`)
+            .join(", ");
+          const date = new Date(order.createdAt).toLocaleDateString("ru-RU");
+          const statusLabel = order.status === "DELIVERED" ? "доставлен" : "забран";
+          return (
+            <div key={order.id} className="list-item" onClick={() => setSelectedOrder(order)}>
+              <div className="list-item-title">
+                {order.name} — {order.address}
+              </div>
+              <div className="list-item-subtitle">
+                {items} — {date}, {statusLabel}
+              </div>
+            </div>
+          );
+        })}
+      </Card>
+
       {selectedOrder && (
         <Modal onClose={() => setSelectedOrder(null)}>
           <h2 style={{ margin: "0 0 4px" }}>{selectedOrder.name}</h2>
@@ -354,12 +405,15 @@ export function CourierScreen() {
               display: "block",
               textAlign: "center",
               textDecoration: "none",
-              marginBottom: selectedOrder.status !== "DELIVERED" ? 8 : 0,
+              marginBottom:
+                selectedOrder.status !== "DELIVERED" && selectedOrder.status !== "PICKED_UP"
+                  ? 8
+                  : 0,
             }}
           >
             Маршрут в 2ГИС
           </a>
-          {selectedOrder.status !== "DELIVERED" && (
+          {selectedOrder.status !== "DELIVERED" && selectedOrder.status !== "PICKED_UP" && (
             <Button
               onClick={() => handleDelivered(selectedOrder.id)}
               style={{ width: "100%" }}

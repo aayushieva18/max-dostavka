@@ -287,6 +287,31 @@ app.get("/api/orders", requireOwner, async (req, res) => {
   res.json(orders);
 });
 
+// История — уже завершённые заказы (выданы/забраны), с поиском по имени
+// или телефону покупателя. Без поиска отдаёт последние 50, чтобы не тащить
+// сразу всю историю целиком.
+app.get("/api/orders/history", requireOwner, async (req, res) => {
+  const search = (req.query.search as string | undefined)?.trim();
+  const orders = await prisma.order.findMany({
+    where: {
+      courierId: req.courierId,
+      status: { in: ["DELIVERED", "PICKED_UP"] },
+      ...(search
+        ? {
+            OR: [
+              { name: { contains: search, mode: "insensitive" } },
+              { phone: { contains: search } },
+            ],
+          }
+        : {}),
+    },
+    include: { items: { include: { product: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  res.json(orders);
+});
+
 // Хозяйка нажала «заказ выдал».
 app.post("/api/orders/:id/delivered", requireOwner, async (req, res) => {
   const order = await prisma.order.update({

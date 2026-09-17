@@ -118,6 +118,13 @@ export const api = {
 
   getOrders: () => ownerRequest<Order[]>("/api/orders"),
 
+  // История — уже завершённые заказы (выданы/забраны), можно найти по
+  // имени или телефону покупателя.
+  getOrderHistory: (search: string) =>
+    ownerRequest<Order[]>(
+      `/api/orders/history${search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ""}`
+    ),
+
   createOrder: (data: {
     courierSlug: string;
     maxUserId: string;
