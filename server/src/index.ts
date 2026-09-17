@@ -14,6 +14,20 @@ app.use(express.json({ limit: "5mb" }));
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
+// Список заказов и управление товарами — это данные и действия хозяйки
+// (имена/адреса/телефоны покупателей, изменение остатков), а не покупателей.
+// Раньше эти пути были открыты вообще без проверки — любой человек с
+// адресом сервера мог посмотреть все заказы. Закрываем секретным словом,
+// которое знает только хозяйка (передаётся в заголовке x-owner-token).
+function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const token = req.header("x-owner-token");
+  if (!process.env.OWNER_SECRET || token !== process.env.OWNER_SECRET) {
+    res.status(401).json({ error: "Неверный пароль хозяйки" });
+    return;
+  }
+  next();
+}
+
 // --- Товары и остатки -------------------------------------------------
 
 // Список товаров, доступных к заказу прямо сейчас (availableQty > 0).
@@ -24,7 +38,7 @@ app.get("/api/products", async (_req, res) => {
 
 // Хозяйка заводит новый товар (название + сколько есть в наличии сейчас,
 // фото — необязательно).
-app.post("/api/products", async (req, res) => {
+app.post("/api/products", requireOwner, async (req, res) => {
   const { name, availableQty, imageUrl } = req.body as {
     name: string;
     availableQty: number;
@@ -42,7 +56,7 @@ app.post("/api/products", async (req, res) => {
 });
 
 // Хозяйка добавляет или меняет фото товара.
-app.post("/api/products/:id/image", async (req, res) => {
+app.post("/api/products/:id/image", requireOwner, async (req, res) => {
   const id = Number(req.params.id);
   const { imageUrl } = req.body as { imageUrl: string | null };
   const product = await prisma.product.update({
@@ -54,7 +68,7 @@ app.post("/api/products/:id/image", async (req, res) => {
 });
 
 // Хозяйка переименовывает существующий товар.
-app.post("/api/products/:id/rename", async (req, res) => {
+app.post("/api/products/:id/rename", requireOwner, async (req, res) => {
   const id = Number(req.params.id);
   const { name } = req.body as { name: string };
   if (!name.trim()) {
@@ -71,7 +85,7 @@ app.post("/api/products/:id/rename", async (req, res) => {
 
 // Хозяйка загружает остаток перед выездом. Полностью задаёт доступное
 // количество (не прибавляет, а именно "вот сколько есть сейчас").
-app.post("/api/products/:id/stock", async (req, res) => {
+app.post("/api/products/:id/stock", requireOwner, async (req, res) => {
   const id = Number(req.params.id);
   const { availableQty } = req.body as { availableQty: number };
   const product = await prisma.product.update({
@@ -162,7 +176,7 @@ app.post("/api/orders", async (req, res) => {
 
 // Заказы на сегодня для экрана хозяйки — с данными покупателя (снимок именно
 // этого заказа, см. комментарий в schema.prisma) и составом.
-app.get("/api/orders", async (_req, res) => {
+app.get("/api/orders", requireOwner, async (_req, res) => {
   const orders = await prisma.order.findMany({
     where: { status: { in: ["NEW", "ON_THE_WAY"] } },
     include: { items: { include: { product: true } } },
@@ -172,7 +186,7 @@ app.get("/api/orders", async (_req, res) => {
 });
 
 // Хозяйка нажала «заказ выдал».
-app.post("/api/orders/:id/delivered", async (req, res) => {
+app.post("/api/orders/:id/delivered", requireOwner, async (req, res) => {
   const order = await prisma.order.update({
     where: { id: Number(req.params.id) },
     data: { status: "DELIVERED" },

@@ -1,4 +1,5 @@
 import { SERVER_URL } from "./config";
+import { getOwnerToken } from "./ownerAuth";
 
 export type Product = {
   id: number;
@@ -50,29 +51,46 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// То же самое, но с паролем хозяйки — для запросов, которые видят/меняют
+// данные заказов и товаров (не для обычной формы заказа покупателя).
+async function ownerRequest<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${SERVER_URL}${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      "x-owner-token": getOwnerToken() ?? "",
+    },
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `Ошибка запроса: ${res.status}`);
+  }
+  return res.json();
+}
+
 export const api = {
   getProducts: () => request<Product[]>("/api/products"),
 
   createProduct: (name: string, availableQty: number, imageUrl?: string | null) =>
-    request<Product>("/api/products", {
+    ownerRequest<Product>("/api/products", {
       method: "POST",
       body: JSON.stringify({ name, availableQty, imageUrl }),
     }),
 
   renameProduct: (productId: number, name: string) =>
-    request<Product>(`/api/products/${productId}/rename`, {
+    ownerRequest<Product>(`/api/products/${productId}/rename`, {
       method: "POST",
       body: JSON.stringify({ name }),
     }),
 
   setProductImage: (productId: number, imageUrl: string | null) =>
-    request<Product>(`/api/products/${productId}/image`, {
+    ownerRequest<Product>(`/api/products/${productId}/image`, {
       method: "POST",
       body: JSON.stringify({ imageUrl }),
     }),
 
   setStock: (productId: number, availableQty: number) =>
-    request<Product>(`/api/products/${productId}/stock`, {
+    ownerRequest<Product>(`/api/products/${productId}/stock`, {
       method: "POST",
       body: JSON.stringify({ availableQty }),
     }),
@@ -80,7 +98,7 @@ export const api = {
   getCustomer: (maxUserId: string) =>
     request<Customer>(`/api/customers/${maxUserId}`),
 
-  getOrders: () => request<Order[]>("/api/orders"),
+  getOrders: () => ownerRequest<Order[]>("/api/orders"),
 
   createOrder: (data: {
     maxUserId: string;
@@ -97,7 +115,7 @@ export const api = {
     }),
 
   markDelivered: (orderId: number) =>
-    request<Order>(`/api/orders/${orderId}/delivered`, { method: "POST" }),
+    ownerRequest<Order>(`/api/orders/${orderId}/delivered`, { method: "POST" }),
 
   markPickedUp: (orderId: number) =>
     request<Order>(`/api/orders/${orderId}/picked-up`, { method: "POST" }),
