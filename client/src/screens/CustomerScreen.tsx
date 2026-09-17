@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Order, type Product } from "../lib/api";
+import { api, type CourierInfo, type Order, type Product } from "../lib/api";
 import { socket, connectAsCustomer } from "../lib/socket";
 import {
   getMaxUserFirstName,
@@ -32,6 +32,7 @@ function joinAddress(settlement: string, street: string): string {
 }
 
 export function CustomerScreen({ courierSlug, maxUserId }: Props) {
+  const [courierInfo, setCourierInfo] = useState<CourierInfo | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [name, setName] = useState(getMaxUserFirstName());
   const [settlement, setSettlement] = useState("");
@@ -76,6 +77,10 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
     return () => {
       socket.disconnect();
     };
+  }, [courierSlug]);
+
+  useEffect(() => {
+    api.getCourierInfo(courierSlug).then(setCourierInfo).catch(() => {});
   }, [courierSlug]);
 
   useEffect(() => {
@@ -192,6 +197,10 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
               ? `курьер в пути, прибудет примерно через ${etaMinutes} мин`
               : "курьер в пути"}
           </p>
+          <p style={{ margin: "0 0 12px" }}>
+            Доставка:{" "}
+            {activeOrder.deliveryFee === 0 ? "бесплатно" : `${activeOrder.deliveryFee} ₽`}
+          </p>
           <Button onClick={handlePickedUp} style={{ width: "100%" }}>
             Заказ забрал
           </Button>
@@ -250,6 +259,15 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
                 </div>
               </div>
             ))
+          )}
+
+          {courierInfo && (
+            <Muted>
+              Доставка:{" "}
+              {courierInfo.deliveryFee === 0
+                ? "бесплатно"
+                : `${courierInfo.deliveryFee} ₽`}
+            </Muted>
           )}
 
           <Button

@@ -2,7 +2,12 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { Server, type Socket } from "socket.io";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Courier } from "@prisma/client";
+
+// Ошибка, которую специально показываем покупателю/курьеру как есть (текст
+// понятный, без внутренних деталей) — в отличие от любой другой ошибки
+// (например, от Prisma), где наружу должно уходить только общее сообщение.
+class UserFacingError extends Error {}
 
 const prisma = new PrismaClient();
 const app = express();
@@ -32,6 +37,11 @@ declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
+      // Полный объект курьера (не только id) — чтобы в самой транзакции
+      // оформления заказа не делать лишний запрос к базе (это уже стоило
+      // одного упавшего по таймауту заказа, когда транзакция стала на один
+      // запрос длиннее допустимых 5 секунд).
+      courier?: Courier;
       courierId?: number;
     }
   }
@@ -49,6 +59,7 @@ async function requireOwner(req: express.Request, res: express.Response, next: e
     res.status(401).json({ error: "Неверный пароль хозяйки" });
     return;
   }
+  req.courier = courier;
   req.courierId = courier.id;
   next();
 }
@@ -62,6 +73,7 @@ async function resolveCourierBySlug(req: express.Request, res: express.Response,
     res.status(404).json({ error: "Такой ссылки для заказа не существует" });
     return;
   }
+  req.courier = courier;
   req.courierId = courier.id;
   next();
 }
@@ -69,8 +81,31 @@ async function resolveCourierBySlug(req: express.Request, res: express.Response,
 // Данные о самом курьере (свой slug/название) — нужно клиенту, чтобы знать,
 // в какую "комнату" сокета подключаться, и что показать в шапке экрана.
 app.get("/api/me", requireOwner, async (req, res) => {
-  const courier = await prisma.courier.findUniqueOrThrow({ where: { id: req.courierId } });
-  res.json({ id: courier.id, slug: courier.slug, name: courier.name });
+  const courier = req.courier!;
+  res.json({
+    id: courier.id,
+    slug: courier.slug,
+    name: courier.name,
+    deliveryFee: courier.deliveryFee,
+  });
+});
+
+// Курьер меняет свою стоимость доставки (0 — бесплатно). Не трогает уже
+// оформленные заказы — у них своя сохранённая на момент заказа цена.
+app.post("/api/me/delivery-fee", requireOwner, async (req, res) => {
+  const { deliveryFee } = req.body as { deliveryFee: number };
+  const courier = await prisma.courier.update({
+    where: { id: req.courierId },
+    data: { deliveryFee: Math.max(0, Math.round(deliveryFee) || 0) },
+  });
+  res.json({ deliveryFee: courier.deliveryFee });
+});
+
+// Публичная информация о курьере (название, стоимость доставки) — нужна
+// покупателю в форме заказа, до входа и без пароля.
+app.get("/api/courier", resolveCourierBySlug, async (req, res) => {
+  const courier = req.courier!;
+  res.json({ name: courier.name, deliveryFee: courier.deliveryFee });
 });
 
 // --- Товары и остатки -------------------------------------------------
@@ -180,20 +215,22 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
 
   try {
     const result = await prisma.$transaction(async (tx) => {
+      // Проверка остатка и списание — одним атомарным запросом на товар
+      // (а не "сначала проверить, потом списать" отдельно), чтобы не было
+      // случая, когда между проверкой и списанием кто-то другой успел
+      // разобрать тот же товар. Заодно вдвое короче транзакция — раньше
+      // на каждый товар уходило два обращения к базе, теперь одно.
       for (const item of items) {
-        const product = await tx.product.findUniqueOrThrow({
-          where: { id: item.productId, courierId },
-        });
-        if (product.availableQty < item.quantity) {
-          throw new Error(`Товара «${product.name}» не хватает в наличии`);
-        }
-      }
-
-      for (const item of items) {
-        await tx.product.update({
-          where: { id: item.productId, courierId },
+        const decremented = await tx.product.updateMany({
+          where: { id: item.productId, courierId, availableQty: { gte: item.quantity } },
           data: { availableQty: { decrement: item.quantity } },
         });
+        if (decremented.count === 0) {
+          const product = await tx.product.findUnique({ where: { id: item.productId, courierId } });
+          throw new UserFacingError(
+            product ? `Товара «${product.name}» не хватает в наличии` : "Такого товара не существует"
+          );
+        }
       }
 
       const customer = await tx.customer.upsert({
@@ -206,26 +243,35 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
         data: {
           courierId,
           customerId: customer.id,
-          // Снимок имени/адреса/телефона на момент ИМЕННО ЭТОГО заказа —
-          // не через customer, потому что его данные перезапишутся при
-          // следующем заказе того же покупателя.
+          // Снимок имени/адреса/телефона/стоимости доставки на момент
+          // ИМЕННО ЭТОГО заказа — не через customer/courier напрямую,
+          // потому что их данные могут поменяться позже (адрес — при
+          // следующем заказе, цена доставки — если курьер её изменит).
+          // req.courier взят из middleware, а не из базы ещё раз — короче
+          // транзакция.
           name,
           address,
           phone,
+          deliveryFee: req.courier!.deliveryFee,
           lat,
           lon,
           items: { create: items },
         },
         include: { items: true },
       });
-    });
+    // Стандартный лимит Prisma на такую транзакцию — 5 секунд, и с базой в
+    // облаке (не на этом же компьютере) при заказе из нескольких товаров
+    // этого впритык не хватало ("transaction not found" — по сути истёк
+    // срок). Увеличиваем с запасом.
+    }, { timeout: 15000 });
 
     io.to(courierRoom(courierId)).emit("orders:updated");
     io.to(courierRoom(courierId)).emit("products:updated");
     res.json(result);
   } catch (e) {
+    console.error(e);
     res.status(400).json({
-      error: e instanceof Error ? e.message : "Не удалось оформить заказ",
+      error: e instanceof UserFacingError ? e.message : "Не удалось оформить заказ",
     });
   }
 });

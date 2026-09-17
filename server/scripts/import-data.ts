@@ -9,7 +9,7 @@ import { readFileSync } from "fs";
 const prisma = new PrismaClient();
 
 type Dump = {
-  couriers: { id: number; slug: string; name: string; ownerToken: string }[];
+  couriers: { id: number; slug: string; name: string; ownerToken: string; deliveryFee: number }[];
   products: { id: number; courierId: number; name: string; availableQty: number; imageUrl: string | null }[];
   customers: {
     id: number;

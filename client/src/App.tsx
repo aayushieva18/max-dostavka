@@ -1,4 +1,4 @@
-import { getMaxUserId } from "./lib/max";
+import { getMaxUserId, getMaxStartParam } from "./lib/max";
 import { DEFAULT_COURIER_SLUG } from "./lib/config";
 import { CustomerScreen } from "./screens/CustomerScreen";
 import { CourierScreen } from "./screens/CourierScreen";
@@ -16,7 +16,11 @@ export default function App() {
     );
   }
 
-  const courierSlug = params.get("courier") ?? DEFAULT_COURIER_SLUG;
+  // Внутри MAX разные курьеры различаются через deep-link (?startapp=slug
+  // в ссылке на бота), а не через обычный адрес сайта — один и тот же бот
+  // обслуживает всех курьеров. Вне MAX (обычная ссылка в браузере) курьер
+  // определяется по ?courier= в адресе, как раньше.
+  const courierSlug = getMaxStartParam() ?? params.get("courier") ?? DEFAULT_COURIER_SLUG;
   const maxUserId = getMaxUserId();
   return <CustomerScreen courierSlug={courierSlug} maxUserId={maxUserId} />;
 }

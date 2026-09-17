@@ -25,12 +25,25 @@ export function CourierScreen() {
   const [newProductImage, setNewProductImage] = useState<string | null>(null);
   const [addingProduct, setAddingProduct] = useState(false);
   const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
+  const [deliveryFeeDraft, setDeliveryFeeDraft] = useState("");
+  const [savingFee, setSavingFee] = useState(false);
 
   // Узнаём, кто мы сами (название, slug для ссылки покупателям) — токен
   // пароля уже подтверждён на экране входа (OwnerGate).
   useEffect(() => {
     api.getMe().then(setMe).catch(() => {});
   }, []);
+
+  async function handleSaveDeliveryFee() {
+    setSavingFee(true);
+    try {
+      const { deliveryFee } = await api.setDeliveryFee(Number(deliveryFeeDraft) || 0);
+      setMe((prev) => (prev ? { ...prev, deliveryFee } : prev));
+      setDeliveryFeeDraft("");
+    } finally {
+      setSavingFee(false);
+    }
+  }
 
   function reloadProducts(slug: string) {
     api.getProducts(slug).then(setProducts).catch(() => {});
@@ -174,6 +187,25 @@ export function CourierScreen() {
       {customerLink && (
         <Card title="Ссылка для покупателей">
           <Muted>{customerLink}</Muted>
+        </Card>
+      )}
+
+      {me && (
+        <Card title="Стоимость доставки">
+          <Muted>
+            Сейчас: {me.deliveryFee === 0 ? "бесплатно" : `${me.deliveryFee} ₽`}
+          </Muted>
+          <div className="row" style={{ marginTop: 8 }}>
+            <Input
+              type="number"
+              placeholder="0 — бесплатно"
+              value={deliveryFeeDraft}
+              onChange={(e) => setDeliveryFeeDraft(e.target.value)}
+            />
+            <Button disabled={savingFee} onClick={handleSaveDeliveryFee}>
+              Сохранить
+            </Button>
+          </div>
         </Card>
       )}
 

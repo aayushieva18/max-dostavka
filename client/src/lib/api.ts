@@ -28,18 +28,20 @@ export type OrderStatus = "NEW" | "ON_THE_WAY" | "DELIVERED" | "PICKED_UP";
 export type Order = {
   id: number;
   status: OrderStatus;
-  // Снимок имени/адреса/телефона на момент именно этого заказа (не текущие
-  // данные покупателя — те могли уже поменяться в более новом заказе).
+  // Снимок имени/адреса/телефона/стоимости доставки на момент именно этого
+  // заказа (не текущие данные покупателя/курьера — те могли поменяться позже).
   name: string;
   address: string;
   phone: string;
+  deliveryFee: number;
   lat: number;
   lon: number;
   createdAt: string;
   items: OrderItem[];
 };
 
-export type Me = { id: number; slug: string; name: string };
+export type Me = { id: number; slug: string; name: string; deliveryFee: number };
+export type CourierInfo = { name: string; deliveryFee: number };
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${SERVER_URL}${path}`, {
@@ -72,6 +74,15 @@ async function ownerRequest<T>(path: string, options?: RequestInit): Promise<T> 
 
 export const api = {
   getMe: () => ownerRequest<Me>("/api/me"),
+
+  setDeliveryFee: (deliveryFee: number) =>
+    ownerRequest<{ deliveryFee: number }>("/api/me/delivery-fee", {
+      method: "POST",
+      body: JSON.stringify({ deliveryFee }),
+    }),
+
+  getCourierInfo: (courierSlug: string) =>
+    request<CourierInfo>(`/api/courier?courier=${encodeURIComponent(courierSlug)}`),
 
   getProducts: (courierSlug: string) =>
     request<Product[]>(`/api/products?courier=${encodeURIComponent(courierSlug)}`),

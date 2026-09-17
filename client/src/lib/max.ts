@@ -44,6 +44,15 @@ function getOrCreateBrowserId(): string {
   }
 }
 
+// Ссылка на конкретного курьера внутри MAX работает не через обычный адрес
+// браузера (?courier=slug — его там не подставишь), а через deep-link вида
+// https://max.ru/ИмяБота?startapp=slug — MAX передаёт этот "slug" в
+// initDataUnsafe.start_param. Вне MAX такого нет — тогда берём ?courier=
+// из обычной адресной строки (см. App.tsx).
+export function getMaxStartParam(): string | null {
+  return getWebApp()?.initDataUnsafe?.start_param ?? null;
+}
+
 export function getMaxUserId(): string {
   const user = getWebApp()?.initDataUnsafe?.user as MaxUser | undefined;
   if (user) return String(user.id);
