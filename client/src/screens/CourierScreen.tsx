@@ -6,6 +6,7 @@ import { MapView } from "../components/MapView";
 import { buildDeliveryRoute, type RouteResult } from "../lib/route";
 import { build2gisRouteLink } from "../lib/twogis";
 import { compressImage } from "../lib/image";
+import { SUPPORT_MAX_LINK } from "../lib/config";
 import { Screen, Card, Input, Button, Muted, Modal } from "../components/ui";
 
 export function CourierScreen() {
@@ -385,6 +386,18 @@ export function CourierScreen() {
             </div>
           );
         })}
+      </Card>
+
+      <Card title="Техподдержка">
+        <a
+          href={SUPPORT_MAX_LINK}
+          target="_blank"
+          rel="noreferrer"
+          className="button button-secondary"
+          style={{ display: "block", textAlign: "center", textDecoration: "none" }}
+        >
+          Написать в MAX
+        </a>
       </Card>
 
       {selectedOrder && (
