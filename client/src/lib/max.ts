@@ -21,10 +21,35 @@ function getDevOverrideUserId(): string | null {
   return new URLSearchParams(window.location.search).get("max_user_id");
 }
 
+// Пока нет бота в MAX, покупатели открывают обычную ссылку в своём браузере,
+// а не изнутри MAX — там нет window.WebApp, и узнать, кто именно открыл
+// страницу, неоткуда. Раньше в этом случае ВСЕ покупатели считались одним и
+// тем же условным "test-user-local" — из-за этого один видел данные другого.
+// Теперь для каждого браузера/телефона создаём и запоминаем свой собственный
+// случайный номер (один раз, дальше берётся из localStorage) — так у каждого
+// покупателя свои данные, не пересекающиеся с чужими.
+function getOrCreateBrowserId(): string {
+  const key = "max-dostavka-browser-id";
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const created = crypto.randomUUID();
+    localStorage.setItem(key, created);
+    return created;
+  } catch {
+    // localStorage недоступен (например, приватный режим с жёсткими
+    // ограничениями) — данные между заказами просто не запомнятся,
+    // но приложение не должно из-за этого падать.
+    return crypto.randomUUID();
+  }
+}
+
 export function getMaxUserId(): string {
   const user = getWebApp()?.initDataUnsafe?.user as MaxUser | undefined;
   if (user) return String(user.id);
-  return getDevOverrideUserId() ?? "test-user-local";
+  const override = getDevOverrideUserId();
+  if (override) return override;
+  return getOrCreateBrowserId();
 }
 
 // Имя покупателя MAX уже знает — подставляем как подсказку, чтобы не
