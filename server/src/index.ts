@@ -52,11 +52,22 @@ declare global {
 // Раньше эти пути были открыты вообще без проверки — любой человек с
 // адресом сервера мог посмотреть все заказы. Закрываем секретным паролем;
 // заодно по этому паролю сервер узнаёт, КАКОГО именно курьера показывать.
+// Курьер с истёкшим сроком (expiresAt в прошлом) не должен работать вообще —
+// ни его собственный экран, ни витрина для его покупателей. null означает
+// "без ограничения" (так у Арюны — первого курьера в проекте).
+function isExpired(courier: Courier): boolean {
+  return courier.expiresAt !== null && courier.expiresAt < new Date();
+}
+
 async function requireOwner(req: express.Request, res: express.Response, next: express.NextFunction) {
   const token = req.header("x-owner-token");
   const courier = token ? await prisma.courier.findUnique({ where: { ownerToken: token } }) : null;
   if (!courier) {
     res.status(401).json({ error: "Неверный пароль хозяйки" });
+    return;
+  }
+  if (isExpired(courier)) {
+    res.status(403).json({ error: "Доступ временно приостановлен — обратись к администратору" });
     return;
   }
   req.courier = courier;
@@ -71,6 +82,10 @@ async function resolveCourierBySlug(req: express.Request, res: express.Response,
   const courier = slug ? await prisma.courier.findUnique({ where: { slug } }) : null;
   if (!courier) {
     res.status(404).json({ error: "Такой ссылки для заказа не существует" });
+    return;
+  }
+  if (isExpired(courier)) {
+    res.status(403).json({ error: "Магазин временно недоступен" });
     return;
   }
   req.courier = courier;
@@ -351,13 +366,13 @@ io.on("connection", async (socket: Socket) => {
 
   if (auth.role === "owner" && auth.token) {
     const courier = await prisma.courier.findUnique({ where: { ownerToken: auth.token } });
-    if (courier) {
+    if (courier && !isExpired(courier)) {
       courierId = courier.id;
       isOwnerSocket = true;
     }
   } else if (auth.role === "customer" && auth.slug) {
     const courier = await prisma.courier.findUnique({ where: { slug: auth.slug } });
-    if (courier) courierId = courier.id;
+    if (courier && !isExpired(courier)) courierId = courier.id;
   }
 
   if (!courierId) {

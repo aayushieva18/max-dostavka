@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type CourierInfo, type Order, type Product } from "../lib/api";
+import { api, ApiError, type CourierInfo, type Order, type Product } from "../lib/api";
 import { socket, connectAsCustomer } from "../lib/socket";
 import {
   getMaxUserFirstName,
@@ -46,6 +46,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
+  const [storeDisabled, setStoreDisabled] = useState(false);
 
   // Подставляем данные покупателя, если он уже когда-то заказывал именно у
   // этого курьера: сначала пробуем сервер (главный источник), потом
@@ -80,11 +81,16 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   }, [courierSlug]);
 
   useEffect(() => {
-    api.getCourierInfo(courierSlug).then(setCourierInfo).catch(() => {});
+    api.getCourierInfo(courierSlug).then(setCourierInfo).catch((e) => {
+      if (e instanceof ApiError && e.status === 403) setStoreDisabled(true);
+    });
   }, [courierSlug]);
 
   useEffect(() => {
-    api.getProducts(courierSlug).then(setProducts).catch(() => setError("Не получилось загрузить список товаров"));
+    api.getProducts(courierSlug).then(setProducts).catch((e) => {
+      if (e instanceof ApiError && e.status === 403) setStoreDisabled(true);
+      else setError("Не получилось загрузить список товаров");
+    });
     const reload = () => api.getProducts(courierSlug).then(setProducts).catch(() => {});
     socket.on("products:updated", reload);
     return () => {
@@ -166,7 +172,11 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
 
   return (
     <Screen title="Заказ доставки">
-      {activeOrder && activeOrder.status !== "PICKED_UP" ? (
+      {storeDisabled ? (
+        <Card>
+          <Muted>Магазин временно недоступен. Попробуйте зайти позже.</Muted>
+        </Card>
+      ) : activeOrder && activeOrder.status !== "PICKED_UP" ? (
         <Card title="Твой заказ оформлен">
           <MapView
             center={[activeOrder.lat, activeOrder.lon]}

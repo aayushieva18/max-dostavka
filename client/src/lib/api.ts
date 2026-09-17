@@ -43,6 +43,18 @@ export type Order = {
 export type Me = { id: number; slug: string; name: string; deliveryFee: number };
 export type CourierInfo = { name: string; deliveryFee: number };
 
+// Ошибка запроса к серверу с приложенным HTTP-статусом — по нему экраны
+// отличают "магазин временно недоступен" (403, курьер с истёкшим сроком) от
+// прочих ошибок сети, чтобы показать не просто "не получилось", а понятную
+// причину.
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${SERVER_URL}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -50,7 +62,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Ошибка запроса: ${res.status}`);
+    throw new ApiError(body.error ?? `Ошибка запроса: ${res.status}`, res.status);
   }
   return res.json();
 }
@@ -67,7 +79,7 @@ async function ownerRequest<T>(path: string, options?: RequestInit): Promise<T> 
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `Ошибка запроса: ${res.status}`);
+    throw new ApiError(body.error ?? `Ошибка запроса: ${res.status}`, res.status);
   }
   return res.json();
 }

@@ -19,8 +19,8 @@ export function OwnerGate({ children }: { children: ReactNode }) {
     try {
       await api.getOrders();
       setUnlocked(true);
-    } catch {
-      setError("Неверный пароль");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Неверный пароль");
     } finally {
       setChecking(false);
     }

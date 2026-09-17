@@ -21,9 +21,14 @@ async function main() {
 
   const ownerToken = randomBytes(9).toString("base64url");
   const deliveryFee = feeArg ? Math.max(0, Math.round(Number(feeArg)) || 0) : 0;
+  // Новым курьерам — доступ на месяц по умолчанию (продлевается отдельным
+  // скриптом extend-courier.ts, когда курьер заплатил за следующий период).
+  // У Арюны (первый курьер, заведён напрямую в базе) ограничения нет.
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + 30);
 
   const courier = await prisma.courier.create({
-    data: { slug, name, ownerToken, deliveryFee },
+    data: { slug, name, ownerToken, deliveryFee, expiresAt },
   });
 
   console.log("Курьер создан:", courier.name);
@@ -33,6 +38,7 @@ async function main() {
     "Стоимость доставки:",
     courier.deliveryFee === 0 ? "бесплатно" : `${courier.deliveryFee} руб.`
   );
+  console.log("Доступ действует до:", courier.expiresAt?.toLocaleDateString("ru-RU"));
 }
 
 main()
