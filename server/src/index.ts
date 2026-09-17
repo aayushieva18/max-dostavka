@@ -7,7 +7,9 @@ import { PrismaClient } from "@prisma/client";
 const prisma = new PrismaClient();
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Фото товара едет как data-url прямо в теле запроса — увеличиваем лимит
+// (по умолчанию у express он всего 100кб, фото туда не влезет).
+app.use(express.json({ limit: "5mb" }));
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, { cors: { origin: "*" } });
@@ -20,15 +22,32 @@ app.get("/api/products", async (_req, res) => {
   res.json(products);
 });
 
-// Хозяйка заводит новый товар (название + сколько есть в наличии сейчас).
+// Хозяйка заводит новый товар (название + сколько есть в наличии сейчас,
+// фото — необязательно).
 app.post("/api/products", async (req, res) => {
-  const { name, availableQty } = req.body as { name: string; availableQty: number };
+  const { name, availableQty, imageUrl } = req.body as {
+    name: string;
+    availableQty: number;
+    imageUrl?: string | null;
+  };
   if (!name.trim()) {
     res.status(400).json({ error: "Название товара не может быть пустым" });
     return;
   }
   const product = await prisma.product.create({
-    data: { name: name.trim(), availableQty: availableQty ?? 0 },
+    data: { name: name.trim(), availableQty: availableQty ?? 0, imageUrl: imageUrl ?? null },
+  });
+  io.emit("products:updated");
+  res.json(product);
+});
+
+// Хозяйка добавляет или меняет фото товара.
+app.post("/api/products/:id/image", async (req, res) => {
+  const id = Number(req.params.id);
+  const { imageUrl } = req.body as { imageUrl: string | null };
+  const product = await prisma.product.update({
+    where: { id },
+    data: { imageUrl },
   });
   io.emit("products:updated");
   res.json(product);

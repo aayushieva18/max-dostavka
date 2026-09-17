@@ -4,6 +4,7 @@ export type Product = {
   id: number;
   name: string;
   availableQty: number;
+  imageUrl: string | null;
 };
 
 export type Customer = {
@@ -52,16 +53,22 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   getProducts: () => request<Product[]>("/api/products"),
 
-  createProduct: (name: string, availableQty: number) =>
+  createProduct: (name: string, availableQty: number, imageUrl?: string | null) =>
     request<Product>("/api/products", {
       method: "POST",
-      body: JSON.stringify({ name, availableQty }),
+      body: JSON.stringify({ name, availableQty, imageUrl }),
     }),
 
   renameProduct: (productId: number, name: string) =>
     request<Product>(`/api/products/${productId}/rename`, {
       method: "POST",
       body: JSON.stringify({ name }),
+    }),
+
+  setProductImage: (productId: number, imageUrl: string | null) =>
+    request<Product>(`/api/products/${productId}/image`, {
+      method: "POST",
+      body: JSON.stringify({ imageUrl }),
     }),
 
   setStock: (productId: number, availableQty: number) =>

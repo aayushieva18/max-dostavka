@@ -4,8 +4,7 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  // GitHub Pages отдаёт сайт по адресу вида
-  // https://<логин>.github.io/max-dostavka/ — без этой настройки ссылки на
-  // файлы (JS/CSS) внутри собранной страницы будут неправильными.
-  base: '/max-dostavka/',
+  // Render Static Site отдаёт сайт с корня (https://dostavka-app.onrender.com/),
+  // в отличие от GitHub Pages — там путь был со вложенной папкой.
+  base: '/',
 })

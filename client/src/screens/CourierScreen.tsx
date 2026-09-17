@@ -4,6 +4,7 @@ import { socket } from "../lib/socket";
 import { MapView } from "../components/MapView";
 import { buildDeliveryRoute, type RouteResult } from "../lib/route";
 import { build2gisRouteLink } from "../lib/twogis";
+import { compressImage } from "../lib/image";
 import { Screen, Card, Input, Button, Muted, Modal } from "../components/ui";
 
 export function CourierScreen() {
@@ -19,7 +20,9 @@ export function CourierScreen() {
   const [routeError, setRouteError] = useState<string | null>(null);
   const [newProductName, setNewProductName] = useState("");
   const [newProductQty, setNewProductQty] = useState("");
+  const [newProductImage, setNewProductImage] = useState<string | null>(null);
   const [addingProduct, setAddingProduct] = useState(false);
+  const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
 
   function reloadProducts() {
     api.getProducts().then(setProducts).catch(() => {});
@@ -92,11 +95,23 @@ export function CourierScreen() {
     if (!newProductName.trim()) return;
     setAddingProduct(true);
     try {
-      await api.createProduct(newProductName.trim(), Number(newProductQty) || 0);
+      await api.createProduct(newProductName.trim(), Number(newProductQty) || 0, newProductImage);
       setNewProductName("");
       setNewProductQty("");
+      setNewProductImage(null);
     } finally {
       setAddingProduct(false);
+    }
+  }
+
+  async function handleProductImageChange(productId: number, file: File | undefined) {
+    if (!file) return;
+    setUploadingImageFor(productId);
+    try {
+      const compressed = await compressImage(file);
+      await api.setProductImage(productId, compressed);
+    } finally {
+      setUploadingImageFor(null);
     }
   }
 
@@ -158,44 +173,78 @@ export function CourierScreen() {
 
       <Card title="Остатки товара">
         {products.map((product) => (
-          <div key={product.id} className="row" style={{ marginBottom: 8 }}>
-            <Input
-              value={nameDraft[product.id] ?? product.name}
-              onChange={(e) =>
-                setNameDraft((prev) => ({ ...prev, [product.id]: e.target.value }))
-              }
-            />
-            <Input
-              type="number"
-              style={{ maxWidth: 70, flex: "0 0 auto" }}
-              placeholder={String(product.availableQty)}
-              value={stockDraft[product.id] ?? ""}
-              onChange={(e) =>
-                setStockDraft((prev) => ({ ...prev, [product.id]: e.target.value }))
-              }
-            />
-            <Button variant="secondary" onClick={() => handleSaveProduct(product)}>
-              Сохранить
-            </Button>
+          <div key={product.id} style={{ marginBottom: 12 }}>
+            <div className="row">
+              {product.imageUrl ? (
+                <img
+                  src={product.imageUrl}
+                  alt=""
+                  style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", flex: "0 0 auto" }}
+                />
+              ) : (
+                <div style={{ width: 40, height: 40, borderRadius: 8, background: "var(--border)", flex: "0 0 auto" }} />
+              )}
+              <Input
+                value={nameDraft[product.id] ?? product.name}
+                onChange={(e) =>
+                  setNameDraft((prev) => ({ ...prev, [product.id]: e.target.value }))
+                }
+              />
+              <Input
+                type="number"
+                style={{ maxWidth: 70, flex: "0 0 auto" }}
+                placeholder={String(product.availableQty)}
+                value={stockDraft[product.id] ?? ""}
+                onChange={(e) =>
+                  setStockDraft((prev) => ({ ...prev, [product.id]: e.target.value }))
+                }
+              />
+              <Button variant="secondary" onClick={() => handleSaveProduct(product)}>
+                Сохранить
+              </Button>
+            </div>
+            <label className="muted" style={{ display: "block", marginTop: 4 }}>
+              {uploadingImageFor === product.id ? "Загружаю фото…" : "Изменить фото"}
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "block", marginTop: 2 }}
+                onChange={(e) => handleProductImageChange(product.id, e.target.files?.[0])}
+              />
+            </label>
           </div>
         ))}
 
-        <div className="row">
-          <Input
-            placeholder="Название нового товара"
-            value={newProductName}
-            onChange={(e) => setNewProductName(e.target.value)}
-          />
-          <Input
-            type="number"
-            placeholder="Кол-во"
-            style={{ maxWidth: 70, flex: "0 0 auto" }}
-            value={newProductQty}
-            onChange={(e) => setNewProductQty(e.target.value)}
-          />
-          <Button disabled={addingProduct} onClick={handleAddProduct}>
-            Добавить
-          </Button>
+        <div>
+          <div className="row">
+            <Input
+              placeholder="Название нового товара"
+              value={newProductName}
+              onChange={(e) => setNewProductName(e.target.value)}
+            />
+            <Input
+              type="number"
+              placeholder="Кол-во"
+              style={{ maxWidth: 70, flex: "0 0 auto" }}
+              value={newProductQty}
+              onChange={(e) => setNewProductQty(e.target.value)}
+            />
+            <Button disabled={addingProduct} onClick={handleAddProduct}>
+              Добавить
+            </Button>
+          </div>
+          <label className="muted" style={{ display: "block", marginTop: 4 }}>
+            {newProductImage ? "Фото выбрано" : "Фото товара (необязательно)"}
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: "block", marginTop: 2 }}
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) setNewProductImage(await compressImage(file));
+              }}
+            />
+          </label>
         </div>
       </Card>
 

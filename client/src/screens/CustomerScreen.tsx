@@ -215,19 +215,31 @@ export function CustomerScreen({ maxUserId }: Props) {
             <Muted>Пока нет доступных товаров</Muted>
           ) : (
             products.map((product) => (
-              <Field key={product.id} label={product.name}>
-                {product.availableQty === 0 ? (
-                  <Muted>Нет в наличии</Muted>
-                ) : (
-                  <QuantityPicker
-                    value={quantities[product.id] ?? 0}
-                    max={product.availableQty}
-                    onChange={(value) =>
-                      setQuantities((prev) => ({ ...prev, [product.id]: value }))
-                    }
+              <div key={product.id} className="row" style={{ marginBottom: 12 }}>
+                {product.imageUrl ? (
+                  <img
+                    src={product.imageUrl}
+                    alt=""
+                    style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", flex: "0 0 auto" }}
                   />
+                ) : (
+                  <div style={{ width: 48, height: 48, borderRadius: 8, background: "var(--border)", flex: "0 0 auto" }} />
                 )}
-              </Field>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>{product.name}</div>
+                  {product.availableQty === 0 ? (
+                    <Muted>Нет в наличии</Muted>
+                  ) : (
+                    <QuantityPicker
+                      value={quantities[product.id] ?? 0}
+                      max={product.availableQty}
+                      onChange={(value) =>
+                        setQuantities((prev) => ({ ...prev, [product.id]: value }))
+                      }
+                    />
+                  )}
+                </div>
+              </div>
             ))
           )}
 
