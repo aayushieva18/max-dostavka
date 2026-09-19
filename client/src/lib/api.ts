@@ -23,7 +23,7 @@ export type OrderItem = {
   product: Product;
 };
 
-export type OrderStatus = "NEW" | "ON_THE_WAY" | "DELIVERED" | "PICKED_UP";
+export type OrderStatus = "NEW" | "ON_THE_WAY" | "DELIVERED" | "PICKED_UP" | "CANCELLED";
 
 export type Order = {
   id: number;
@@ -128,6 +128,14 @@ export const api = {
       `/api/customers/${maxUserId}?courier=${encodeURIComponent(courierSlug)}`
     ),
 
+  // Вся история заказов покупателя у этого курьера — и для того, чтобы
+  // показать её отдельным списком, и чтобы после перезахода восстановить
+  // его текущий активный заказ (если есть).
+  getCustomerOrders: (courierSlug: string, maxUserId: string) =>
+    request<Order[]>(
+      `/api/customer-orders/${maxUserId}?courier=${encodeURIComponent(courierSlug)}`
+    ),
+
   getOrders: () => ownerRequest<Order[]>("/api/orders"),
 
   // История — уже завершённые заказы (выданы/забраны), можно найти по
@@ -159,5 +167,14 @@ export const api = {
     request<Order>(
       `/api/orders/${orderId}/picked-up?courier=${encodeURIComponent(courierSlug)}`,
       { method: "POST" }
+    ),
+
+  cancelOrder: (orderId: number) =>
+    ownerRequest<Order>(`/api/orders/${orderId}/cancel`, { method: "POST" }),
+
+  cancelOrderByCustomer: (courierSlug: string, orderId: number, maxUserId: string) =>
+    request<Order>(
+      `/api/orders/${orderId}/cancel-by-customer?courier=${encodeURIComponent(courierSlug)}`,
+      { method: "POST", body: JSON.stringify({ maxUserId }) }
     ),
 };

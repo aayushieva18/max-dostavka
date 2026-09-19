@@ -183,6 +183,12 @@ export function CourierScreen() {
     setSelectedOrder(null);
   }
 
+  async function handleCancel(orderId: number) {
+    if (!window.confirm("Отменить этот заказ? Товар вернётся в остаток.")) return;
+    await api.cancelOrder(orderId);
+    setSelectedOrder(null);
+  }
+
   async function handleSearchHistory() {
     setLoadingHistory(true);
     try {
@@ -374,7 +380,12 @@ export function CourierScreen() {
             .map((i) => `${i.product.name} × ${i.quantity}`)
             .join(", ");
           const date = new Date(order.createdAt).toLocaleDateString("ru-RU");
-          const statusLabel = order.status === "DELIVERED" ? "доставлен" : "забран";
+          const statusLabel =
+            order.status === "DELIVERED"
+              ? "доставлен"
+              : order.status === "PICKED_UP"
+              ? "забран"
+              : "отменён";
           return (
             <div key={order.id} className="list-item" onClick={() => setSelectedOrder(order)}>
               <div className="list-item-title">
@@ -427,12 +438,21 @@ export function CourierScreen() {
             Маршрут в 2ГИС
           </a>
           {selectedOrder.status !== "DELIVERED" && selectedOrder.status !== "PICKED_UP" && (
-            <Button
-              onClick={() => handleDelivered(selectedOrder.id)}
-              style={{ width: "100%" }}
-            >
-              Заказ выдал
-            </Button>
+            <>
+              <Button
+                onClick={() => handleDelivered(selectedOrder.id)}
+                style={{ width: "100%", marginBottom: 8 }}
+              >
+                Заказ выдал
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => handleCancel(selectedOrder.id)}
+                style={{ width: "100%" }}
+              >
+                Отменить заказ
+              </Button>
+            </>
           )}
         </Modal>
       )}

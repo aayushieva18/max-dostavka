@@ -47,6 +47,8 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
   const [storeDisabled, setStoreDisabled] = useState(false);
+  const [orderHistory, setOrderHistory] = useState<Order[]>([]);
+  const [cancelling, setCancelling] = useState(false);
 
   // Подставляем данные покупателя, если он уже когда-то заказывал именно у
   // этого курьера: сначала пробуем сервер (главный источник), потом
@@ -71,6 +73,22 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
         setPhone(fromStorage.phone);
       }
     })();
+  }, [courierSlug, maxUserId]);
+
+  // Вся история заказов этого покупателя у этого курьера — чтобы показать
+  // список прошлых заказов, а заодно, если приложение было закрыто и
+  // открыто заново, восстановить его ТЕКУЩИЙ ещё не забранный заказ (без
+  // этого статус "терялся" при перезаходе — activeOrder раньше жил только в
+  // памяти вкладки).
+  useEffect(() => {
+    api
+      .getCustomerOrders(courierSlug, maxUserId)
+      .then((orders) => {
+        setOrderHistory(orders);
+        const current = orders.find((o) => o.status === "NEW" || o.status === "ON_THE_WAY" || o.status === "DELIVERED");
+        if (current) setActiveOrder(current);
+      })
+      .catch(() => {});
   }, [courierSlug, maxUserId]);
 
   useEffect(() => {
@@ -154,6 +172,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
           })),
       });
       setActiveOrder(order);
+      setOrderHistory((prev) => [order, ...prev]);
       setEtaMinutes(null);
       setQuantities({});
       saveCustomerToDeviceStorage({ name, address, phone });
@@ -168,6 +187,22 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
     if (!activeOrder) return;
     const updated = await api.markPickedUp(courierSlug, activeOrder.id);
     setActiveOrder(updated);
+    setOrderHistory((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+  }
+
+  async function handleCancel() {
+    if (!activeOrder) return;
+    if (!window.confirm("Отменить заказ?")) return;
+    setCancelling(true);
+    try {
+      const updated = await api.cancelOrderByCustomer(courierSlug, activeOrder.id, maxUserId);
+      setOrderHistory((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      setActiveOrder(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не получилось отменить заказ");
+    } finally {
+      setCancelling(false);
+    }
   }
 
   return (
@@ -214,6 +249,16 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
           <Button onClick={handlePickedUp} style={{ width: "100%" }}>
             Заказ забрал
           </Button>
+          {(activeOrder.status === "NEW" || activeOrder.status === "ON_THE_WAY") && (
+            <Button
+              variant="secondary"
+              onClick={handleCancel}
+              disabled={cancelling}
+              style={{ width: "100%", marginTop: 8 }}
+            >
+              {cancelling ? "Отменяем…" : "Отменить заказ"}
+            </Button>
+          )}
         </Card>
       ) : (
         <Card>
@@ -287,6 +332,35 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
           >
             {submitting ? "Оформляем…" : "Заказать"}
           </Button>
+        </Card>
+      )}
+
+      {!storeDisabled && orderHistory.length > 0 && (
+        <Card title="Мои заказы">
+          {orderHistory.map((order) => {
+            const items = order.items
+              .map((i) => `${i.product.name} × ${i.quantity}`)
+              .join(", ");
+            const date = new Date(order.createdAt).toLocaleDateString("ru-RU");
+            const statusLabel =
+              order.status === "NEW"
+                ? "оформлен"
+                : order.status === "ON_THE_WAY"
+                ? "курьер в пути"
+                : order.status === "DELIVERED"
+                ? "курьер выдал"
+                : order.status === "PICKED_UP"
+                ? "забран"
+                : "отменён";
+            return (
+              <div key={order.id} className="list-item">
+                <div className="list-item-title">{date}</div>
+                <div className="list-item-subtitle">
+                  {items} — {statusLabel}
+                </div>
+              </div>
+            );
+          })}
         </Card>
       )}
 

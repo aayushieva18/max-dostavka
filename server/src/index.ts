@@ -2,7 +2,7 @@ import express from "express";
 import cors from "cors";
 import { createServer } from "http";
 import { Server, type Socket } from "socket.io";
-import { PrismaClient, type Courier } from "@prisma/client";
+import { PrismaClient, Prisma, type Courier } from "@prisma/client";
 
 // Ошибка, которую специально показываем покупателю/курьеру как есть (текст
 // понятный, без внутренних деталей) — в отличие от любой другой ошибки
@@ -211,6 +211,26 @@ app.get("/api/customers/:maxUserId", resolveCourierBySlug, async (req, res) => {
   res.json(customer);
 });
 
+// Вся история заказов ЭТОГО покупателя у этого курьера (не только текущий
+// активный) — чтобы после перезахода в приложение покупатель видел, что уже
+// заказывал, и не терял из виду свой заказ в пути.
+app.get("/api/customer-orders/:maxUserId", resolveCourierBySlug, async (req, res) => {
+  const customer = await prisma.customer.findUnique({
+    where: { courierId_maxUserId: { courierId: req.courierId!, maxUserId: String(req.params.maxUserId) } },
+  });
+  if (!customer) {
+    res.json([]);
+    return;
+  }
+  const orders = await prisma.order.findMany({
+    where: { customerId: customer.id },
+    include: { items: { include: { product: true } } },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  res.json(orders);
+});
+
 // --- Заказы -------------------------------------------------------------
 
 // Оформление заказа. Проверяет остатки на каждый товар и отклоняет
@@ -310,7 +330,7 @@ app.get("/api/orders/history", requireOwner, async (req, res) => {
   const orders = await prisma.order.findMany({
     where: {
       courierId: req.courierId,
-      status: { in: ["DELIVERED", "PICKED_UP"] },
+      status: { in: ["DELIVERED", "PICKED_UP", "CANCELLED"] },
       ...(search
         ? {
             OR: [
@@ -345,6 +365,70 @@ app.post("/api/orders/:id/picked-up", resolveCourierBySlug, async (req, res) => 
   });
   io.to(courierRoom(req.courierId!)).emit("orders:updated");
   res.json(order);
+});
+
+// Отмена заказа — общая логика для курьера и для самого покупателя: заказ
+// можно отменить, только пока он не выдан/не забран/уже не отменён, а товар
+// при отмене возвращается в остаток (он был списан при оформлении заказа).
+// requireMaxUserId, если передан, — покупатель может отменить только СВОЙ
+// заказ (курьер, отменяя со своего экрана, этой проверки не проходит).
+async function cancelOrderInTransaction(
+  tx: Prisma.TransactionClient,
+  id: number,
+  courierId: number,
+  requireMaxUserId?: string
+) {
+  const existing = await tx.order.findUnique({
+    where: { id, courierId },
+    include: { items: true, customer: true },
+  });
+  if (!existing) throw new UserFacingError("Заказ не найден");
+  if (requireMaxUserId !== undefined && existing.customer.maxUserId !== requireMaxUserId) {
+    throw new UserFacingError("Это не твой заказ");
+  }
+  if (existing.status !== "NEW" && existing.status !== "ON_THE_WAY") {
+    throw new UserFacingError("Этот заказ уже нельзя отменить");
+  }
+  for (const item of existing.items) {
+    await tx.product.update({
+      where: { id: item.productId },
+      data: { availableQty: { increment: item.quantity } },
+    });
+  }
+  return tx.order.update({
+    where: { id },
+    data: { status: "CANCELLED" },
+    include: { items: { include: { product: true } } },
+  });
+}
+
+// Хозяйка отменяет заказ со своего экрана.
+app.post("/api/orders/:id/cancel", requireOwner, async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const order = await prisma.$transaction((tx) => cancelOrderInTransaction(tx, id, req.courierId!));
+    io.to(courierRoom(req.courierId!)).emit("orders:updated");
+    io.to(courierRoom(req.courierId!)).emit("products:updated");
+    res.json(order);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось отменить заказ" });
+  }
+});
+
+// Покупатель отменяет свой заказ.
+app.post("/api/orders/:id/cancel-by-customer", resolveCourierBySlug, async (req, res) => {
+  const id = Number(req.params.id);
+  const { maxUserId } = req.body as { maxUserId: string };
+  try {
+    const order = await prisma.$transaction((tx) =>
+      cancelOrderInTransaction(tx, id, req.courierId!, maxUserId)
+    );
+    io.to(courierRoom(req.courierId!)).emit("orders:updated");
+    io.to(courierRoom(req.courierId!)).emit("products:updated");
+    res.json(order);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось отменить заказ" });
+  }
 });
 
 // --- Живое положение курьера --------------------------------------------
