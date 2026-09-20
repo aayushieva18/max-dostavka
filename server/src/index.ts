@@ -322,15 +322,30 @@ app.get("/api/orders", requireOwner, async (req, res) => {
   res.json(orders);
 });
 
-// История — уже завершённые заказы (выданы/забраны), с поиском по имени
-// или телефону покупателя. Без поиска отдаёт последние 50, чтобы не тащить
-// сразу всю историю целиком.
+// История — уже завершённые заказы (выданы/забраны/отменены), с поиском по
+// имени/телефону покупателя и/или по диапазону дат оформления заказа. Без
+// фильтров отдаёт последние 50, чтобы не тащить сразу всю историю целиком.
 app.get("/api/orders/history", requireOwner, async (req, res) => {
   const search = (req.query.search as string | undefined)?.trim();
+  // Даты приходят как "YYYY-MM-DD" (обычный <input type="date">) — "до"
+  // включает весь день целиком, а не только полночь.
+  const from = req.query.from as string | undefined;
+  const to = req.query.to as string | undefined;
+  const fromDate = from ? new Date(`${from}T00:00:00`) : undefined;
+  const toDate = to ? new Date(`${to}T23:59:59.999`) : undefined;
+
   const orders = await prisma.order.findMany({
     where: {
       courierId: req.courierId,
       status: { in: ["DELIVERED", "PICKED_UP", "CANCELLED"] },
+      ...(fromDate || toDate
+        ? {
+            createdAt: {
+              ...(fromDate ? { gte: fromDate } : {}),
+              ...(toDate ? { lte: toDate } : {}),
+            },
+          }
+        : {}),
       ...(search
         ? {
             OR: [

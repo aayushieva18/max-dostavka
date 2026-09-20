@@ -138,12 +138,17 @@ export const api = {
 
   getOrders: () => ownerRequest<Order[]>("/api/orders"),
 
-  // История — уже завершённые заказы (выданы/забраны), можно найти по
-  // имени или телефону покупателя.
-  getOrderHistory: (search: string) =>
-    ownerRequest<Order[]>(
-      `/api/orders/history${search.trim() ? `?search=${encodeURIComponent(search.trim())}` : ""}`
-    ),
+  // История — уже завершённые заказы (выданы/забраны/отменены), можно найти
+  // по имени/телефону и/или по диапазону дат оформления (from/to —
+  // "YYYY-MM-DD", как отдаёт <input type="date">).
+  getOrderHistory: (filters: { search?: string; from?: string; to?: string }) => {
+    const params = new URLSearchParams();
+    if (filters.search?.trim()) params.set("search", filters.search.trim());
+    if (filters.from) params.set("from", filters.from);
+    if (filters.to) params.set("to", filters.to);
+    const query = params.toString();
+    return ownerRequest<Order[]>(`/api/orders/history${query ? `?${query}` : ""}`);
+  },
 
   createOrder: (data: {
     courierSlug: string;

@@ -30,6 +30,8 @@ export function CourierScreen() {
   const [deliveryFeeDraft, setDeliveryFeeDraft] = useState("");
   const [savingFee, setSavingFee] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
   const [historyOrders, setHistoryOrders] = useState<Order[]>([]);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -193,7 +195,11 @@ export function CourierScreen() {
   async function handleSearchHistory() {
     setLoadingHistory(true);
     try {
-      const result = await api.getOrderHistory(historySearch);
+      const result = await api.getOrderHistory({
+        search: historySearch,
+        from: historyFrom,
+        to: historyTo,
+      });
       setHistoryOrders(result);
       setHistoryLoaded(true);
     } finally {
@@ -360,7 +366,7 @@ export function CourierScreen() {
       </Card>
 
       <Card title="История заказов">
-        <div className="row">
+        <div className="row" style={{ marginBottom: 8 }}>
           <Input
             placeholder="Имя или телефон покупателя"
             value={historySearch}
@@ -368,6 +374,23 @@ export function CourierScreen() {
             onKeyDown={(e) => {
               if (e.key === "Enter") handleSearchHistory();
             }}
+          />
+        </div>
+        <div className="row">
+          <Input
+            type="date"
+            aria-label="С даты"
+            value={historyFrom}
+            onChange={(e) => setHistoryFrom(e.target.value)}
+          />
+          <span className="muted" style={{ flex: "0 0 auto" }}>
+            —
+          </span>
+          <Input
+            type="date"
+            aria-label="По дату"
+            value={historyTo}
+            onChange={(e) => setHistoryTo(e.target.value)}
           />
           <Button disabled={loadingHistory} onClick={handleSearchHistory}>
             Найти
