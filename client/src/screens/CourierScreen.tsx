@@ -27,6 +27,7 @@ export function CourierScreen() {
   const [newProductImage, setNewProductImage] = useState<string | null>(null);
   const [addingProduct, setAddingProduct] = useState(false);
   const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deliveryFeeDraft, setDeliveryFeeDraft] = useState("");
   const [savingFee, setSavingFee] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
@@ -181,6 +182,11 @@ export function CourierScreen() {
     });
   }
 
+  async function handleDeleteProduct(productId: number) {
+    await api.deleteProduct(productId);
+    setConfirmDeleteId(null);
+  }
+
   async function handleDelivered(orderId: number) {
     await api.markDelivered(orderId);
     setSelectedOrder(null);
@@ -302,6 +308,34 @@ export function CourierScreen() {
                 onChange={(e) => handleProductImageChange(product.id, e.target.files?.[0])}
               />
             </label>
+            {confirmDeleteId === product.id ? (
+              <div className="row" style={{ marginTop: 8 }}>
+                <span className="muted">Удалить «{product.name}»?</span>
+                <Button
+                  variant="secondary"
+                  onClick={() => setConfirmDeleteId(null)}
+                  style={{ marginLeft: "auto" }}
+                >
+                  Отмена
+                </Button>
+                <Button onClick={() => handleDeleteProduct(product.id)}>Да, удалить</Button>
+              </div>
+            ) : (
+              <button
+                className="muted"
+                style={{
+                  background: "none",
+                  border: "none",
+                  padding: 0,
+                  marginTop: 8,
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                }}
+                onClick={() => setConfirmDeleteId(product.id)}
+              >
+                Удалить товар
+              </button>
+            )}
           </div>
         ))}
 
@@ -376,7 +410,7 @@ export function CourierScreen() {
             }}
           />
         </div>
-        <div className="row">
+        <div className="row" style={{ marginBottom: 8 }}>
           <Input
             type="date"
             aria-label="С даты"
@@ -392,10 +426,14 @@ export function CourierScreen() {
             value={historyTo}
             onChange={(e) => setHistoryTo(e.target.value)}
           />
-          <Button disabled={loadingHistory} onClick={handleSearchHistory}>
-            Найти
-          </Button>
         </div>
+        <Button
+          disabled={loadingHistory}
+          onClick={handleSearchHistory}
+          style={{ width: "100%", marginBottom: 8 }}
+        >
+          Найти
+        </Button>
         {historyLoaded && historyOrders.length === 0 && (
           <Muted>Ничего не найдено</Muted>
         )}

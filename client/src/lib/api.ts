@@ -123,6 +123,9 @@ export const api = {
       body: JSON.stringify({ availableQty }),
     }),
 
+  deleteProduct: (productId: number) =>
+    ownerRequest<Product>(`/api/products/${productId}/delete`, { method: "POST" }),
+
   getCustomer: (courierSlug: string, maxUserId: string) =>
     request<Customer>(
       `/api/customers/${maxUserId}?courier=${encodeURIComponent(courierSlug)}`

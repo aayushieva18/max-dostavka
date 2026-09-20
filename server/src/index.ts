@@ -129,7 +129,7 @@ app.get("/api/courier", resolveCourierBySlug, async (req, res) => {
 // у конкретного курьера.
 app.get("/api/products", resolveCourierBySlug, async (req, res) => {
   const products = await prisma.product.findMany({
-    where: { courierId: req.courierId },
+    where: { courierId: req.courierId, archived: false },
     orderBy: { id: "asc" },
   });
   res.json(products);
@@ -195,6 +195,22 @@ app.post("/api/products/:id/stock", requireOwner, async (req, res) => {
   const product = await prisma.product.update({
     where: { id, courierId: req.courierId },
     data: { availableQty },
+  });
+  io.to(courierRoom(req.courierId!)).emit("products:updated");
+  res.json(product);
+});
+
+// "Удаление" товара — на самом деле скрытие (archived = true), не настоящее
+// удаление строки: если товар уже фигурировал в чьих-то прошлых заказах,
+// обычный DELETE упёрся бы в внешний ключ OrderItem → Product и либо упал с
+// ошибкой, либо (если бы разрешили каскад) стёр бы состав старых заказов.
+// Скрытый товар просто перестаёт отдаваться и покупателям, и на экране
+// хозяйки — прошлые заказы с ним по-прежнему показываются как есть.
+app.post("/api/products/:id/delete", requireOwner, async (req, res) => {
+  const id = Number(req.params.id);
+  const product = await prisma.product.update({
+    where: { id, courierId: req.courierId },
+    data: { archived: true },
   });
   io.to(courierRoom(req.courierId!)).emit("products:updated");
   res.json(product);
@@ -443,6 +459,40 @@ app.post("/api/orders/:id/cancel-by-customer", resolveCourierBySlug, async (req,
     res.json(order);
   } catch (e) {
     res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось отменить заказ" });
+  }
+});
+
+// ВРЕМЕННЫЙ эндпоинт для одноразовой чистки пробных заказов (по просьбе
+// пользователя 2026-09-21) — насовсем удаляет заказы курьера, кроме
+// перечисленных в keepOrderIds, вместе с их позициями, и заодно убирает
+// покупателей, у которых после этого не осталось ни одного заказа. Остатки
+// товара НЕ трогает (пользователь попросила оставить как есть). Удалить
+// этот роут из кода сразу после использования — постоянная возможность
+// безвозвратного удаления заказов не нужна и опасна как есть.
+app.post("/api/admin/purge-orders", requireOwner, async (req, res) => {
+  const { keepOrderIds } = req.body as { keepOrderIds: number[] };
+  const courierId = req.courierId!;
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const toDelete = await tx.order.findMany({
+        where: { courierId, id: { notIn: keepOrderIds } },
+        select: { id: true },
+      });
+      const ids = toDelete.map((o) => o.id);
+      await tx.orderItem.deleteMany({ where: { orderId: { in: ids } } });
+      await tx.order.deleteMany({ where: { id: { in: ids } } });
+      const orphaned = await tx.customer.findMany({
+        where: { courierId, orders: { none: {} } },
+        select: { id: true },
+      });
+      await tx.customer.deleteMany({ where: { id: { in: orphaned.map((c) => c.id) } } });
+      return { deletedOrders: ids.length, deletedCustomers: orphaned.length };
+    });
+    io.to(courierRoom(courierId)).emit("orders:updated");
+    res.json(result);
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({ error: "Не удалось выполнить очистку" });
   }
 });
 
