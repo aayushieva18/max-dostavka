@@ -462,40 +462,6 @@ app.post("/api/orders/:id/cancel-by-customer", resolveCourierBySlug, async (req,
   }
 });
 
-// ВРЕМЕННЫЙ эндпоинт для одноразовой чистки пробных заказов (по просьбе
-// пользователя 2026-09-21) — насовсем удаляет заказы курьера, кроме
-// перечисленных в keepOrderIds, вместе с их позициями, и заодно убирает
-// покупателей, у которых после этого не осталось ни одного заказа. Остатки
-// товара НЕ трогает (пользователь попросила оставить как есть). Удалить
-// этот роут из кода сразу после использования — постоянная возможность
-// безвозвратного удаления заказов не нужна и опасна как есть.
-app.post("/api/admin/purge-orders", requireOwner, async (req, res) => {
-  const { keepOrderIds } = req.body as { keepOrderIds: number[] };
-  const courierId = req.courierId!;
-  try {
-    const result = await prisma.$transaction(async (tx) => {
-      const toDelete = await tx.order.findMany({
-        where: { courierId, id: { notIn: keepOrderIds } },
-        select: { id: true },
-      });
-      const ids = toDelete.map((o) => o.id);
-      await tx.orderItem.deleteMany({ where: { orderId: { in: ids } } });
-      await tx.order.deleteMany({ where: { id: { in: ids } } });
-      const orphaned = await tx.customer.findMany({
-        where: { courierId, orders: { none: {} } },
-        select: { id: true },
-      });
-      await tx.customer.deleteMany({ where: { id: { in: orphaned.map((c) => c.id) } } });
-      return { deletedOrders: ids.length, deletedCustomers: orphaned.length };
-    });
-    io.to(courierRoom(courierId)).emit("orders:updated");
-    res.json(result);
-  } catch (e) {
-    console.error(e);
-    res.status(400).json({ error: "Не удалось выполнить очистку" });
-  }
-});
-
 // --- Живое положение курьера --------------------------------------------
 // Курьер шлёт своё положение через сокет; сервер рассылает его только
 // подключённым к НЕМУ ЖЕ покупателям (по комнатам socket.io, одна комната
