@@ -49,6 +49,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [storeDisabled, setStoreDisabled] = useState(false);
   const [orderHistory, setOrderHistory] = useState<Order[]>([]);
   const [cancelling, setCancelling] = useState(false);
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
 
   // Подставляем данные покупателя, если он уже когда-то заказывал именно у
   // этого курьера: сначала пробуем сервер (главный источник), потом
@@ -192,7 +193,6 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
 
   async function handleCancel() {
     if (!activeOrder) return;
-    if (!window.confirm("Отменить заказ?")) return;
     setCancelling(true);
     try {
       const updated = await api.cancelOrderByCustomer(courierSlug, activeOrder.id, maxUserId);
@@ -202,6 +202,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
       setError(e instanceof Error ? e.message : "Не получилось отменить заказ");
     } finally {
       setCancelling(false);
+      setConfirmingCancel(false);
     }
   }
 
@@ -249,16 +250,32 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
           <Button onClick={handlePickedUp} style={{ width: "100%" }}>
             Заказ забрал
           </Button>
-          {(activeOrder.status === "NEW" || activeOrder.status === "ON_THE_WAY") && (
-            <Button
-              variant="secondary"
-              onClick={handleCancel}
-              disabled={cancelling}
-              style={{ width: "100%", marginTop: 8 }}
-            >
-              {cancelling ? "Отменяем…" : "Отменить заказ"}
-            </Button>
-          )}
+          {(activeOrder.status === "NEW" || activeOrder.status === "ON_THE_WAY") &&
+            (confirmingCancel ? (
+              <>
+                <Muted>Точно отменить заказ?</Muted>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setConfirmingCancel(false)}
+                    style={{ flex: 1 }}
+                  >
+                    Не отменять
+                  </Button>
+                  <Button onClick={handleCancel} disabled={cancelling} style={{ flex: 1 }}>
+                    {cancelling ? "Отменяем…" : "Да, отменить"}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmingCancel(true)}
+                style={{ width: "100%", marginTop: 8 }}
+              >
+                Отменить заказ
+              </Button>
+            ))}
         </Card>
       ) : (
         <Card>

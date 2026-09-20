@@ -14,6 +14,7 @@ export function CourierScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [stockDraft, setStockDraft] = useState<Record<number, string>>({});
   const [nameDraft, setNameDraft] = useState<Record<number, string>>({});
   const [myPosition, setMyPosition] = useState<{ lat: number; lon: number } | null>(
@@ -184,9 +185,9 @@ export function CourierScreen() {
   }
 
   async function handleCancel(orderId: number) {
-    if (!window.confirm("Отменить этот заказ? Товар вернётся в остаток.")) return;
     await api.cancelOrder(orderId);
     setSelectedOrder(null);
+    setConfirmCancelId(null);
   }
 
   async function handleSearchHistory() {
@@ -412,7 +413,12 @@ export function CourierScreen() {
       </Card>
 
       {selectedOrder && (
-        <Modal onClose={() => setSelectedOrder(null)}>
+        <Modal
+          onClose={() => {
+            setSelectedOrder(null);
+            setConfirmCancelId(null);
+          }}
+        >
           <h2 style={{ margin: "0 0 4px" }}>{selectedOrder.name}</h2>
           <Muted>{selectedOrder.address}</Muted>
           <p style={{ margin: "12px 0" }}>Телефон: {selectedOrder.phone}</p>
@@ -438,21 +444,39 @@ export function CourierScreen() {
             Маршрут в 2ГИС
           </a>
           {selectedOrder.status !== "DELIVERED" && selectedOrder.status !== "PICKED_UP" && (
-            <>
-              <Button
-                onClick={() => handleDelivered(selectedOrder.id)}
-                style={{ width: "100%", marginBottom: 8 }}
-              >
-                Заказ выдал
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => handleCancel(selectedOrder.id)}
-                style={{ width: "100%" }}
-              >
-                Отменить заказ
-              </Button>
-            </>
+            confirmCancelId === selectedOrder.id ? (
+              <>
+                <Muted>Точно отменить? Товар вернётся в остаток.</Muted>
+                <div className="row" style={{ marginTop: 8 }}>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setConfirmCancelId(null)}
+                    style={{ flex: 1 }}
+                  >
+                    Не отменять
+                  </Button>
+                  <Button onClick={() => handleCancel(selectedOrder.id)} style={{ flex: 1 }}>
+                    Да, отменить
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Button
+                  onClick={() => handleDelivered(selectedOrder.id)}
+                  style={{ width: "100%", marginBottom: 8 }}
+                >
+                  Заказ выдал
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setConfirmCancelId(selectedOrder.id)}
+                  style={{ width: "100%" }}
+                >
+                  Отменить заказ
+                </Button>
+              </>
+            )
           )}
         </Modal>
       )}
