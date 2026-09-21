@@ -10,7 +10,7 @@ import { SUPPORT_MAX_LINK } from "../lib/config";
 import { OrderEditForm } from "../components/OrderEditForm";
 import { formatOrderItems, formatOrderDate } from "../lib/orderFormat";
 import { telHref } from "../lib/phone";
-import { Screen, Card, Input, Button, Muted, Modal } from "../components/ui";
+import { Screen, Card, Input, Button, Muted, Modal, ErrorBanner } from "../components/ui";
 
 export function CourierScreen() {
   const [me, setMe] = useState<Me | null>(null);
@@ -21,6 +21,7 @@ export function CourierScreen() {
   const [editingOrder, setEditingOrder] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [creatingManualOrder, setCreatingManualOrder] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [stockDraft, setStockDraft] = useState<Record<number, string>>({});
   const [nameDraft, setNameDraft] = useState<Record<number, string>>({});
   const [myPosition, setMyPosition] = useState<{ lat: number; lon: number } | null>(
@@ -194,19 +195,31 @@ export function CourierScreen() {
   }
 
   async function handleAccept(orderId: number) {
-    const updated = await api.acceptOrder(orderId);
-    setSelectedOrder(updated);
+    try {
+      await api.acceptOrder(orderId);
+      setSelectedOrder(null);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Не удалось принять заказ");
+    }
   }
 
   async function handleDelivered(orderId: number) {
-    await api.markDelivered(orderId);
-    setSelectedOrder(null);
+    try {
+      await api.markDelivered(orderId);
+      setSelectedOrder(null);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Не удалось отметить заказ выданным");
+    }
   }
 
   async function handleCancel(orderId: number) {
-    await api.cancelOrder(orderId);
-    setSelectedOrder(null);
-    setConfirmCancelId(null);
+    try {
+      await api.cancelOrder(orderId);
+      setSelectedOrder(null);
+      setConfirmCancelId(null);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Не удалось отменить заказ");
+    }
   }
 
   async function handleEditOrder(data: {
@@ -669,6 +682,10 @@ export function CourierScreen() {
         <Modal onClose={() => setZoomedImage(null)}>
           <img src={zoomedImage} alt="" style={{ width: "100%", borderRadius: 8, display: "block" }} />
         </Modal>
+      )}
+
+      {actionError && (
+        <ErrorBanner onClose={() => setActionError(null)}>{actionError}</ErrorBanner>
       )}
     </Screen>
   );
