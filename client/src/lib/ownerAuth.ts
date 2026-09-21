@@ -19,11 +19,3 @@ export function setOwnerToken(token: string) {
     // localStorage недоступен — пароль просто не запомнится между визитами
   }
 }
-
-export function clearOwnerToken() {
-  try {
-    localStorage.removeItem(KEY);
-  } catch {
-    // недоступен — нечего чистить
-  }
-}

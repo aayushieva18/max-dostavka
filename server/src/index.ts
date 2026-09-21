@@ -400,16 +400,16 @@ app.post("/api/orders/:id/picked-up", resolveCourierBySlug, async (req, res) => 
   res.json(order);
 });
 
-// Отмена заказа — общая логика для курьера и для самого покупателя: заказ
-// можно отменить, только пока он не выдан/не забран/уже не отменён, а товар
-// при отмене возвращается в остаток (он был списан при оформлении заказа).
-// requireMaxUserId, если передан, — покупатель может отменить только СВОЙ
-// заказ (курьер, отменяя со своего экрана, этой проверки не проходит).
-async function cancelOrderInTransaction(
+// Общая проверка и для отмены, и для редактирования заказа: существует ли
+// он, принадлежит ли он покупателю (если проверка со стороны покупателя —
+// requireMaxUserId), и не поздно ли его ещё трогать (пока не выдан/не
+// забран/не отменён). actionVerb — только для текста ошибки.
+async function loadEditableOrder(
   tx: Prisma.TransactionClient,
   id: number,
   courierId: number,
-  requireMaxUserId?: string
+  requireMaxUserId: string | undefined,
+  actionVerb: string
 ) {
   const existing = await tx.order.findUnique({
     where: { id, courierId },
@@ -420,8 +420,20 @@ async function cancelOrderInTransaction(
     throw new UserFacingError("Это не твой заказ");
   }
   if (existing.status !== "NEW" && existing.status !== "ON_THE_WAY") {
-    throw new UserFacingError("Этот заказ уже нельзя отменить");
+    throw new UserFacingError(`Этот заказ уже нельзя ${actionVerb}`);
   }
+  return existing;
+}
+
+// Отмена заказа — общая логика для курьера и для самого покупателя: товар
+// при отмене возвращается в остаток (он был списан при оформлении заказа).
+async function cancelOrderInTransaction(
+  tx: Prisma.TransactionClient,
+  id: number,
+  courierId: number,
+  requireMaxUserId?: string
+) {
+  const existing = await loadEditableOrder(tx, id, courierId, requireMaxUserId, "отменить");
   for (const item of existing.items) {
     await tx.product.update({
       where: { id: item.productId },
@@ -486,17 +498,7 @@ async function editOrderInTransaction(
   },
   requireMaxUserId?: string
 ) {
-  const existing = await tx.order.findUnique({
-    where: { id, courierId },
-    include: { items: true, customer: true },
-  });
-  if (!existing) throw new UserFacingError("Заказ не найден");
-  if (requireMaxUserId !== undefined && existing.customer.maxUserId !== requireMaxUserId) {
-    throw new UserFacingError("Это не твой заказ");
-  }
-  if (existing.status !== "NEW" && existing.status !== "ON_THE_WAY") {
-    throw new UserFacingError("Этот заказ уже нельзя изменить");
-  }
+  const existing = await loadEditableOrder(tx, id, courierId, requireMaxUserId, "изменить");
 
   const oldQtyByProduct = new Map(existing.items.map((i) => [i.productId, i.quantity]));
   const newQtyByProduct = new Map(data.items.map((i) => [i.productId, i.quantity]));

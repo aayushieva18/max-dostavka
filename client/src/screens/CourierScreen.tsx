@@ -8,6 +8,7 @@ import { build2gisRouteLink } from "../lib/twogis";
 import { compressImage } from "../lib/image";
 import { SUPPORT_MAX_LINK } from "../lib/config";
 import { OrderEditForm } from "../components/OrderEditForm";
+import { formatOrderItems, formatOrderDate } from "../lib/orderFormat";
 import { Screen, Card, Input, Button, Muted, Modal } from "../components/ui";
 
 export function CourierScreen() {
@@ -404,9 +405,7 @@ export function CourierScreen() {
         ) : (
           orders.map((order, index) => {
             const eta = route?.stops.find((s) => s.index === index)?.etaMinutes;
-            const items = order.items
-              .map((i) => `${i.product.name} × ${i.quantity}`)
-              .join(", ");
+            const items = formatOrderItems(order.items);
             return (
               <div
                 key={order.id}
@@ -464,10 +463,8 @@ export function CourierScreen() {
           <Muted>Ничего не найдено</Muted>
         )}
         {historyOrders.map((order) => {
-          const items = order.items
-            .map((i) => `${i.product.name} × ${i.quantity}`)
-            .join(", ");
-          const date = new Date(order.createdAt).toLocaleDateString("ru-RU");
+          const items = formatOrderItems(order.items);
+          const date = formatOrderDate(order.createdAt);
           const statusLabel =
             order.status === "DELIVERED"
               ? "доставлен"
@@ -524,7 +521,7 @@ export function CourierScreen() {
               <p style={{ margin: "12px 0" }}>Телефон: {selectedOrder.phone}</p>
               <p style={{ margin: "0 0 16px" }}>
                 Товары:{" "}
-                {selectedOrder.items.map((i) => `${i.product.name} × ${i.quantity}`).join(", ")}
+                {formatOrderItems(selectedOrder.items)}
               </p>
               {selectedOrder.comment && (
                 <p style={{ margin: "0 0 16px" }}>Комментарий: {selectedOrder.comment}</p>

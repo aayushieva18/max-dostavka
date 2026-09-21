@@ -12,6 +12,7 @@ import { AddressInput } from "../components/AddressInput";
 import { OrderEditForm } from "../components/OrderEditForm";
 import { geocodeAddress } from "../lib/yandexMaps";
 import { splitAddress, joinAddress } from "../lib/address";
+import { formatOrderItems, formatOrderDate } from "../lib/orderFormat";
 import { Screen, Card, Field, Input, Textarea, Button, Muted, ErrorBanner, Modal } from "../components/ui";
 
 type Props = { courierSlug: string; maxUserId: string };
@@ -397,10 +398,8 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
       {!storeDisabled && orderHistory.length > 0 && (
         <Card title="Мои заказы">
           {orderHistory.map((order) => {
-            const items = order.items
-              .map((i) => `${i.product.name} × ${i.quantity}`)
-              .join(", ");
-            const date = new Date(order.createdAt).toLocaleDateString("ru-RU");
+            const items = formatOrderItems(order.items);
+            const date = formatOrderDate(order.createdAt);
             const statusLabel =
               order.status === "NEW"
                 ? "оформлен"
