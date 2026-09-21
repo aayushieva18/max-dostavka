@@ -1,5 +1,6 @@
 import type * as ymaps from "yandex-maps";
 import { DELIVERY_REGION_BOUNDS, YANDEX_MAPS_API_KEY } from "./config";
+import { splitAddress } from "./address";
 
 let loadPromise: Promise<typeof ymaps> | null = null;
 
@@ -110,6 +111,21 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
       return null;
     });
     if (viaNominatim) return viaNominatim;
+  }
+
+  // Маленькие сёла (Дульдурга, Кункур, Южный Аргалей, Ага-Хангил и похожие)
+  // часто вообще не размечены по улицам ни у Яндекса, ни в OpenStreetMap —
+  // геокодер знает само село, но улицу в нём не находит и с домом-улицей
+  // отдаёт пустой ответ. Последняя попытка — найти хотя бы центр
+  // населённого пункта: курьер доедет до села и уточнит точный дом на
+  // месте (по телефону) — это лучше, чем полный отказ принять заказ.
+  const { settlement } = splitAddress(address);
+  if (settlement.trim()) {
+    const viaYandexSettlement = await geocodeWithYandex(settlement).catch(() => null);
+    if (viaYandexSettlement) return viaYandexSettlement;
+
+    const viaNominatimSettlement = await geocodeWithNominatim(settlement).catch(() => null);
+    if (viaNominatimSettlement) return viaNominatimSettlement;
   }
 
   return null;
