@@ -17,6 +17,7 @@ export function CourierScreen() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [editingOrder, setEditingOrder] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [stockDraft, setStockDraft] = useState<Record<number, string>>({});
   const [nameDraft, setNameDraft] = useState<Record<number, string>>({});
   const [myPosition, setMyPosition] = useState<{ lat: number; lon: number } | null>(
@@ -292,7 +293,15 @@ export function CourierScreen() {
                 <img
                   src={product.imageUrl}
                   alt=""
-                  style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover", flex: "0 0 auto" }}
+                  onClick={() => setZoomedImage(product.imageUrl)}
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: 8,
+                    objectFit: "cover",
+                    flex: "0 0 auto",
+                    cursor: "pointer",
+                  }}
                 />
               ) : (
                 <div style={{ width: 40, height: 40, borderRadius: 8, background: "var(--border)", flex: "0 0 auto" }} />
@@ -581,6 +590,12 @@ export function CourierScreen() {
               )}
             </>
           )}
+        </Modal>
+      )}
+
+      {zoomedImage && (
+        <Modal onClose={() => setZoomedImage(null)}>
+          <img src={zoomedImage} alt="" style={{ width: "100%", borderRadius: 8, display: "block" }} />
         </Modal>
       )}
     </Screen>

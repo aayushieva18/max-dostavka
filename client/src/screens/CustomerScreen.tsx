@@ -12,7 +12,7 @@ import { AddressInput } from "../components/AddressInput";
 import { OrderEditForm } from "../components/OrderEditForm";
 import { geocodeAddress } from "../lib/yandexMaps";
 import { splitAddress, joinAddress } from "../lib/address";
-import { Screen, Card, Field, Input, Textarea, Button, Muted, ErrorBanner } from "../components/ui";
+import { Screen, Card, Field, Input, Textarea, Button, Muted, ErrorBanner, Modal } from "../components/ui";
 
 type Props = { courierSlug: string; maxUserId: string };
 
@@ -26,6 +26,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [comment, setComment] = useState("");
   const [quantities, setQuantities] = useState<Record<number, number>>({});
   const [editing, setEditing] = useState(false);
+  const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
   const [courierPosition, setCourierPosition] = useState<
     { lat: number; lon: number } | null
@@ -343,7 +344,15 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
                   <img
                     src={product.imageUrl}
                     alt=""
-                    style={{ width: 48, height: 48, borderRadius: 8, objectFit: "cover", flex: "0 0 auto" }}
+                    onClick={() => setZoomedImage(product.imageUrl)}
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: 8,
+                      objectFit: "cover",
+                      flex: "0 0 auto",
+                      cursor: "pointer",
+                    }}
                   />
                 ) : (
                   <div style={{ width: 48, height: 48, borderRadius: 8, background: "var(--border)", flex: "0 0 auto" }} />
@@ -412,6 +421,12 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
             );
           })}
         </Card>
+      )}
+
+      {zoomedImage && (
+        <Modal onClose={() => setZoomedImage(null)}>
+          <img src={zoomedImage} alt="" style={{ width: "100%", borderRadius: 8, display: "block" }} />
+        </Modal>
       )}
 
       {error && <ErrorBanner onClose={() => setError(null)}>{error}</ErrorBanner>}
