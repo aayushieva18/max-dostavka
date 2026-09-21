@@ -21,7 +21,14 @@ class UserFacingError extends Error {}
 // просто тихо не отправляем (чтобы это не ломало саму отметку заказа).
 async function sendMaxMessage(maxUserId: string, text: string) {
   const token = process.env.MAX_BOT_TOKEN;
-  if (!token || !/^\d+$/.test(maxUserId)) return;
+  if (!token) {
+    console.log("MAX Bot API: пропущено — MAX_BOT_TOKEN не задан");
+    return;
+  }
+  if (!/^\d+$/.test(maxUserId)) {
+    console.log("MAX Bot API: пропущено — не настоящий id MAX", maxUserId);
+    return;
+  }
   try {
     const res = await fetch(`https://platform-api2.max.ru/messages?user_id=${maxUserId}`, {
       method: "POST",
@@ -30,6 +37,8 @@ async function sendMaxMessage(maxUserId: string, text: string) {
     });
     if (!res.ok) {
       console.error("MAX Bot API: не удалось отправить сообщение", res.status, await res.text());
+    } else {
+      console.log("MAX Bot API: сообщение отправлено", maxUserId);
     }
   } catch (e) {
     console.error("MAX Bot API: ошибка запроса", e);
