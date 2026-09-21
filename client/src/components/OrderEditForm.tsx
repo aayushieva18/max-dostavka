@@ -13,6 +13,7 @@ type SaveData = {
   comment: string | null;
   lat: number;
   lon: number;
+  approxLocation: boolean;
   items: { productId: number; quantity: number }[];
 };
 
@@ -78,6 +79,7 @@ export function OrderEditForm({ order, products, onSave, onCancel, submitLabel =
         comment: comment.trim() || null,
         lat: geocoded.lat,
         lon: geocoded.lon,
+        approxLocation: geocoded.approximate,
         items: Object.entries(quantities)
           .filter(([, qty]) => qty > 0)
           .map(([productId, quantity]) => ({ productId: Number(productId), quantity })),

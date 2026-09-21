@@ -165,6 +165,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
         comment: comment.trim() || null,
         lat: geocoded.lat,
         lon: geocoded.lon,
+        approxLocation: geocoded.approximate,
         items: Object.entries(quantities)
           .filter(([, qty]) => qty > 0)
           .map(([productId, quantity]) => ({
@@ -214,6 +215,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
     comment: string | null;
     lat: number;
     lon: number;
+    approxLocation: boolean;
     items: { productId: number; quantity: number }[];
   }) {
     if (!activeOrder) return;

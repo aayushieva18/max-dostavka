@@ -39,6 +39,10 @@ export type Order = {
   deliveryFee: number;
   lat: number;
   lon: number;
+  // Координаты — это центр населённого пункта, а не точный дом (адрес не
+  // размечен по улицам ни у одного геокодера). Если таких заказов в одном
+  // селе несколько, все точки лягут друг на друга на карте.
+  approxLocation: boolean;
   createdAt: string;
   items: OrderItem[];
 };
@@ -165,6 +169,7 @@ export const api = {
     comment?: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   }) =>
     request<Order>("/api/orders", {
@@ -181,6 +186,7 @@ export const api = {
     comment?: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   }) =>
     ownerRequest<Order>("/api/orders/manual", {
@@ -197,6 +203,7 @@ export const api = {
       comment?: string | null;
       lat: number;
       lon: number;
+      approxLocation?: boolean;
       items: { productId: number; quantity: number }[];
     }
   ) =>
@@ -216,6 +223,7 @@ export const api = {
       comment?: string | null;
       lat: number;
       lon: number;
+      approxLocation?: boolean;
       items: { productId: number; quantity: number }[];
     }
   ) =>

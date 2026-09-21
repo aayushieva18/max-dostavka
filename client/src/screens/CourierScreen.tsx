@@ -229,6 +229,7 @@ export function CourierScreen() {
     comment: string | null;
     lat: number;
     lon: number;
+    approxLocation: boolean;
     items: { productId: number; quantity: number }[];
   }) {
     if (!selectedOrder) return;
@@ -244,6 +245,7 @@ export function CourierScreen() {
     comment: string | null;
     lat: number;
     lon: number;
+    approxLocation: boolean;
     items: { productId: number; quantity: number }[];
   }) {
     await api.createManualOrder(data);
@@ -264,6 +266,7 @@ export function CourierScreen() {
     deliveryFee: me?.deliveryFee ?? 0,
     lat: 0,
     lon: 0,
+    approxLocation: false,
     createdAt: new Date().toISOString(),
     items: [],
   };
@@ -473,6 +476,27 @@ export function CourierScreen() {
         )}
       </Card>
 
+      {orders.some((o) => o.approxLocation) && (
+        <Card title="Заказы с неточным адресом">
+          <Muted>
+            У этих сёл нет размеченных улиц на картах — точка стоит в центре
+            села, а не у конкретного дома. Если таких точек несколько в одном
+            месте, они сольются на карте — открывай нужный заказ прямо
+            отсюда, по списку.
+          </Muted>
+          {orders
+            .filter((o) => o.approxLocation)
+            .map((order) => (
+              <div key={order.id} className="list-item" onClick={() => setSelectedOrder(order)}>
+                <div className="list-item-title">
+                  {order.name} — {order.address}
+                </div>
+                <div className="list-item-subtitle">{formatOrderItems(order.items)}</div>
+              </div>
+            ))}
+        </Card>
+      )}
+
       <Card title="Список заказов">
         {orders.length === 0 ? (
           <Muted>Активных заказов пока нет</Muted>
@@ -604,6 +628,12 @@ export function CourierScreen() {
               </p>
               {selectedOrder.comment && (
                 <p style={{ margin: "0 0 16px" }}>Комментарий: {selectedOrder.comment}</p>
+              )}
+              {selectedOrder.approxLocation && (
+                <p style={{ margin: "0 0 16px", color: "#991b1b" }}>
+                  Точка на карте приблизительная — это центр села, точный дом
+                  уточни по телефону.
+                </p>
               )}
               <a
                 href={build2gisRouteLink(selectedOrder)}

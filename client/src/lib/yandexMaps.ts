@@ -82,7 +82,13 @@ export type GeocodeResult = {
   // Если нет — велика вероятность, что адрес без него теряется среди
   // одинаковых названий улиц в разных сёлах района.
   hasLocality: boolean;
+  // Нашёлся только сам населённый пункт целиком, без улицы (см. фолбэк в
+  // geocodeAddress ниже) — точка на карте это центр села, а не точный дом.
+  // Если таких точек в одном селе несколько, они все лягут друг на друга.
+  approximate: boolean;
 };
+
+type RawGeocodeResult = Omit<GeocodeResult, "approximate">;
 
 // Переводит текстовый адрес в координаты и разбирает его на понятные части.
 // Сначала пробует по-человечески развёрнутый адрес через Яндекс Карты (жёстко
@@ -104,13 +110,13 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
       console.error("Яндекс.Геокодер: ошибка запроса", e);
       return null;
     });
-    if (viaYandex) return viaYandex;
+    if (viaYandex) return { ...viaYandex, approximate: false };
 
     const viaNominatim = await geocodeWithNominatim(candidate).catch((e) => {
       console.error("OpenStreetMap: ошибка запроса", e);
       return null;
     });
-    if (viaNominatim) return viaNominatim;
+    if (viaNominatim) return { ...viaNominatim, approximate: false };
   }
 
   // Маленькие сёла (Дульдурга, Кункур, Южный Аргалей, Ага-Хангил и похожие)
@@ -119,19 +125,22 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
   // отдаёт пустой ответ. Последняя попытка — найти хотя бы центр
   // населённого пункта: курьер доедет до села и уточнит точный дом на
   // месте (по телефону) — это лучше, чем полный отказ принять заказ.
+  // Помечаем такой результат approximate — если в одном селе окажется
+  // несколько таких заказов, все точки лягут в одно место на карте, и
+  // хозяйке нужно будет отличать их не по карте, а по списку.
   const { settlement } = splitAddress(address);
   if (settlement.trim()) {
     const viaYandexSettlement = await geocodeWithYandex(settlement).catch(() => null);
-    if (viaYandexSettlement) return viaYandexSettlement;
+    if (viaYandexSettlement) return { ...viaYandexSettlement, approximate: true };
 
     const viaNominatimSettlement = await geocodeWithNominatim(settlement).catch(() => null);
-    if (viaNominatimSettlement) return viaNominatimSettlement;
+    if (viaNominatimSettlement) return { ...viaNominatimSettlement, approximate: true };
   }
 
   return null;
 }
 
-async function geocodeWithYandex(address: string): Promise<GeocodeResult | null> {
+async function geocodeWithYandex(address: string): Promise<RawGeocodeResult | null> {
   const maps = await loadYandexMaps();
   const result = await maps.geocode(address, {
     results: 1,
@@ -156,7 +165,7 @@ async function geocodeWithYandex(address: string): Promise<GeocodeResult | null>
   };
 }
 
-async function geocodeWithNominatim(address: string): Promise<GeocodeResult | null> {
+async function geocodeWithNominatim(address: string): Promise<RawGeocodeResult | null> {
   const { minLat, minLon, maxLat, maxLon } = DELIVERY_REGION_BOUNDS;
   const params = new URLSearchParams({
     format: "json",

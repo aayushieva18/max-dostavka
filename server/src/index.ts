@@ -344,6 +344,7 @@ async function createOrderInTransaction(
     comment?: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   }
 ) {
@@ -386,6 +387,7 @@ async function createOrderInTransaction(
       deliveryFee,
       lat: data.lat,
       lon: data.lon,
+      approxLocation: data.approxLocation ?? false,
       items: { create: data.items },
     },
     include: { items: true },
@@ -394,7 +396,7 @@ async function createOrderInTransaction(
 
 app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
   const courierId = req.courierId!;
-  const { maxUserId, name, address, phone, comment, lat, lon, items } = req.body as {
+  const { maxUserId, name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
     maxUserId: string;
     name: string;
     address: string;
@@ -402,6 +404,7 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
     comment?: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   };
 
@@ -416,6 +419,7 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
           comment,
           lat,
           lon,
+          approxLocation,
           items,
         }),
       // Стандартный лимит Prisma на такую транзакцию — 5 секунд, и с базой в
@@ -443,13 +447,14 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
 // того же "покупателя", и его прошлые заказы видны в истории вместе.
 app.post("/api/orders/manual", requireOwner, async (req, res) => {
   const courierId = req.courierId!;
-  const { name, address, phone, comment, lat, lon, items } = req.body as {
+  const { name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
     name: string;
     address: string;
     phone: string;
     comment?: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   };
   const maxUserId = `manual:${phone.trim()}`;
@@ -465,6 +470,7 @@ app.post("/api/orders/manual", requireOwner, async (req, res) => {
           comment,
           lat,
           lon,
+          approxLocation,
           items,
         }),
       { timeout: 15000 }
@@ -664,6 +670,7 @@ async function editOrderInTransaction(
     comment: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   },
   requireMaxUserId?: string
@@ -714,6 +721,7 @@ async function editOrderInTransaction(
       comment: data.comment,
       lat: data.lat,
       lon: data.lon,
+      approxLocation: data.approxLocation ?? false,
       items: { create: data.items },
     },
     include: { items: { include: { product: true } } },
@@ -723,13 +731,14 @@ async function editOrderInTransaction(
 // Хозяйка меняет уже оформленный заказ со своего экрана.
 app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
   const id = Number(req.params.id);
-  const { name, address, phone, comment, lat, lon, items } = req.body as {
+  const { name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
     name: string;
     address: string;
     phone: string;
     comment?: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   };
   try {
@@ -742,6 +751,7 @@ app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
           comment: comment?.trim() || null,
           lat,
           lon,
+          approxLocation,
           items,
         }),
       { timeout: 15000 }
@@ -757,7 +767,7 @@ app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
 // Покупатель меняет свой заказ.
 app.post("/api/orders/:id/edit-by-customer", resolveCourierBySlug, async (req, res) => {
   const id = Number(req.params.id);
-  const { maxUserId, name, address, phone, comment, lat, lon, items } = req.body as {
+  const { maxUserId, name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
     maxUserId: string;
     name: string;
     address: string;
@@ -765,6 +775,7 @@ app.post("/api/orders/:id/edit-by-customer", resolveCourierBySlug, async (req, r
     comment?: string | null;
     lat: number;
     lon: number;
+    approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
   };
   try {
@@ -774,7 +785,7 @@ app.post("/api/orders/:id/edit-by-customer", resolveCourierBySlug, async (req, r
           tx,
           id,
           req.courierId!,
-          { name, address, phone, comment: comment?.trim() || null, lat, lon, items },
+          { name, address, phone, comment: comment?.trim() || null, lat, lon, approxLocation, items },
           maxUserId
         ),
       { timeout: 15000 }
