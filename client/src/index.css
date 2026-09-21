@@ -67,8 +67,10 @@ body {
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 15px;
+  font-family: inherit;
   background: var(--card-bg);
   color: var(--text);
+  resize: vertical;
 }
 
 .input:focus {

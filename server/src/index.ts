@@ -254,11 +254,12 @@ app.get("/api/customer-orders/:maxUserId", resolveCourierBySlug, async (req, res
 // "частично оформленные" заказы).
 app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
   const courierId = req.courierId!;
-  const { maxUserId, name, address, phone, lat, lon, items } = req.body as {
+  const { maxUserId, name, address, phone, comment, lat, lon, items } = req.body as {
     maxUserId: string;
     name: string;
     address: string;
     phone: string;
+    comment?: string | null;
     lat: number;
     lon: number;
     items: { productId: number; quantity: number }[];
@@ -303,6 +304,7 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
           name,
           address,
           phone,
+          comment: comment?.trim() || null,
           deliveryFee: req.courier!.deliveryFee,
           lat,
           lon,
@@ -459,6 +461,157 @@ app.post("/api/orders/:id/cancel-by-customer", resolveCourierBySlug, async (req,
     res.json(order);
   } catch (e) {
     res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось отменить заказ" });
+  }
+});
+
+// Редактирование заказа — общая логика для курьера и для самого покупателя:
+// можно менять имя/адрес/телефон/комментарий и состав товаров, пока заказ
+// не выдан/не забран/не отменён (те же условия, что у отмены). Состав
+// товаров при этом можно менять свободно — по каждому товару считаем
+// разницу между старым и новым количеством и одним атомарным запросом
+// списываем/возвращаем именно эту разницу (не весь заказ целиком), с той же
+// проверкой остатка, что и при первом оформлении.
+async function editOrderInTransaction(
+  tx: Prisma.TransactionClient,
+  id: number,
+  courierId: number,
+  data: {
+    name: string;
+    address: string;
+    phone: string;
+    comment: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  },
+  requireMaxUserId?: string
+) {
+  const existing = await tx.order.findUnique({
+    where: { id, courierId },
+    include: { items: true, customer: true },
+  });
+  if (!existing) throw new UserFacingError("Заказ не найден");
+  if (requireMaxUserId !== undefined && existing.customer.maxUserId !== requireMaxUserId) {
+    throw new UserFacingError("Это не твой заказ");
+  }
+  if (existing.status !== "NEW" && existing.status !== "ON_THE_WAY") {
+    throw new UserFacingError("Этот заказ уже нельзя изменить");
+  }
+
+  const oldQtyByProduct = new Map(existing.items.map((i) => [i.productId, i.quantity]));
+  const newQtyByProduct = new Map(data.items.map((i) => [i.productId, i.quantity]));
+  const productIds = new Set([...oldQtyByProduct.keys(), ...newQtyByProduct.keys()]);
+
+  for (const productId of productIds) {
+    const oldQty = oldQtyByProduct.get(productId) ?? 0;
+    const newQty = newQtyByProduct.get(productId) ?? 0;
+    const delta = newQty - oldQty;
+    if (delta === 0) continue;
+    if (delta > 0) {
+      const decremented = await tx.product.updateMany({
+        where: { id: productId, courierId, availableQty: { gte: delta } },
+        data: { availableQty: { decrement: delta } },
+      });
+      if (decremented.count === 0) {
+        const product = await tx.product.findUnique({ where: { id: productId, courierId } });
+        throw new UserFacingError(
+          product ? `Товара «${product.name}» не хватает в наличии` : "Такого товара не существует"
+        );
+      }
+    } else {
+      await tx.product.update({
+        where: { id: productId, courierId },
+        data: { availableQty: { increment: -delta } },
+      });
+    }
+  }
+
+  await tx.customer.update({
+    where: { id: existing.customerId },
+    data: { name: data.name, address: data.address, phone: data.phone },
+  });
+
+  await tx.orderItem.deleteMany({ where: { orderId: id } });
+
+  return tx.order.update({
+    where: { id },
+    data: {
+      name: data.name,
+      address: data.address,
+      phone: data.phone,
+      comment: data.comment,
+      lat: data.lat,
+      lon: data.lon,
+      items: { create: data.items },
+    },
+    include: { items: { include: { product: true } } },
+  });
+}
+
+// Хозяйка меняет уже оформленный заказ со своего экрана.
+app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
+  const id = Number(req.params.id);
+  const { name, address, phone, comment, lat, lon, items } = req.body as {
+    name: string;
+    address: string;
+    phone: string;
+    comment?: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  };
+  try {
+    const order = await prisma.$transaction(
+      (tx) =>
+        editOrderInTransaction(tx, id, req.courierId!, {
+          name,
+          address,
+          phone,
+          comment: comment?.trim() || null,
+          lat,
+          lon,
+          items,
+        }),
+      { timeout: 15000 }
+    );
+    io.to(courierRoom(req.courierId!)).emit("orders:updated");
+    io.to(courierRoom(req.courierId!)).emit("products:updated");
+    res.json(order);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось изменить заказ" });
+  }
+});
+
+// Покупатель меняет свой заказ.
+app.post("/api/orders/:id/edit-by-customer", resolveCourierBySlug, async (req, res) => {
+  const id = Number(req.params.id);
+  const { maxUserId, name, address, phone, comment, lat, lon, items } = req.body as {
+    maxUserId: string;
+    name: string;
+    address: string;
+    phone: string;
+    comment?: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  };
+  try {
+    const order = await prisma.$transaction(
+      (tx) =>
+        editOrderInTransaction(
+          tx,
+          id,
+          req.courierId!,
+          { name, address, phone, comment: comment?.trim() || null, lat, lon, items },
+          maxUserId
+        ),
+      { timeout: 15000 }
+    );
+    io.to(courierRoom(req.courierId!)).emit("orders:updated");
+    io.to(courierRoom(req.courierId!)).emit("products:updated");
+    res.json(order);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось изменить заказ" });
   }
 });
 

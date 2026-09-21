@@ -9,27 +9,12 @@ import {
 import { QuantityPicker } from "../components/QuantityPicker";
 import { MapView } from "../components/MapView";
 import { AddressInput } from "../components/AddressInput";
+import { OrderEditForm } from "../components/OrderEditForm";
 import { geocodeAddress } from "../lib/yandexMaps";
-import { Screen, Card, Field, Input, Button, Muted, ErrorBanner } from "../components/ui";
+import { splitAddress, joinAddress } from "../lib/address";
+import { Screen, Card, Field, Input, Textarea, Button, Muted, ErrorBanner } from "../components/ui";
 
 type Props = { courierSlug: string; maxUserId: string };
-
-// Адрес хранится одной строкой "Населённый пункт, улица и дом" — здесь же
-// на экране это два отдельных поля, чтобы человек физически не мог забыть
-// указать город/село (реальный случай: заказали "Ленина 2" без указания,
-// что это Ага-Хангил, а не Агинское — курьер приехала не туда).
-function splitAddress(saved: string): { settlement: string; street: string } {
-  const commaIndex = saved.indexOf(",");
-  if (commaIndex === -1) return { settlement: "", street: saved };
-  return {
-    settlement: saved.slice(0, commaIndex).trim(),
-    street: saved.slice(commaIndex + 1).trim(),
-  };
-}
-
-function joinAddress(settlement: string, street: string): string {
-  return `${settlement.trim()}, ${street.trim()}`;
-}
 
 export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [courierInfo, setCourierInfo] = useState<CourierInfo | null>(null);
@@ -38,7 +23,9 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [settlement, setSettlement] = useState("");
   const [street, setStreet] = useState("");
   const [phone, setPhone] = useState("");
+  const [comment, setComment] = useState("");
   const [quantities, setQuantities] = useState<Record<number, number>>({});
+  const [editing, setEditing] = useState(false);
   const [activeOrder, setActiveOrder] = useState<Order | null>(null);
   const [courierPosition, setCourierPosition] = useState<
     { lat: number; lon: number } | null
@@ -163,6 +150,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
         name,
         address,
         phone,
+        comment: comment.trim() || null,
         lat: geocoded.lat,
         lon: geocoded.lon,
         items: Object.entries(quantities)
@@ -176,6 +164,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
       setOrderHistory((prev) => [order, ...prev]);
       setEtaMinutes(null);
       setQuantities({});
+      setComment("");
       saveCustomerToDeviceStorage({ name, address, phone });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не получилось оформить заказ");
@@ -206,11 +195,36 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
     }
   }
 
+  async function handleEditSave(data: {
+    name: string;
+    address: string;
+    phone: string;
+    comment: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  }) {
+    if (!activeOrder) return;
+    const updated = await api.editOrderByCustomer(courierSlug, activeOrder.id, maxUserId, data);
+    setActiveOrder(updated);
+    setOrderHistory((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+    setEditing(false);
+  }
+
   return (
     <Screen title="Заказ доставки">
       {storeDisabled ? (
         <Card>
           <Muted>Магазин временно недоступен. Попробуйте зайти позже.</Muted>
+        </Card>
+      ) : activeOrder && activeOrder.status !== "PICKED_UP" && editing ? (
+        <Card title="Изменить заказ">
+          <OrderEditForm
+            order={activeOrder}
+            products={products}
+            onSave={handleEditSave}
+            onCancel={() => setEditing(false)}
+          />
         </Card>
       ) : activeOrder && activeOrder.status !== "PICKED_UP" ? (
         <Card title="Твой заказ оформлен">
@@ -247,6 +261,9 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
             Доставка:{" "}
             {activeOrder.deliveryFee === 0 ? "бесплатно" : `${activeOrder.deliveryFee} ₽`}
           </p>
+          {activeOrder.comment && (
+            <p style={{ margin: "0 0 12px" }}>Комментарий: {activeOrder.comment}</p>
+          )}
           <Button onClick={handlePickedUp} style={{ width: "100%" }}>
             Заказ забрал
           </Button>
@@ -268,13 +285,22 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
                 </div>
               </>
             ) : (
-              <Button
-                variant="secondary"
-                onClick={() => setConfirmingCancel(true)}
-                style={{ width: "100%", marginTop: 8 }}
-              >
-                Отменить заказ
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={() => setEditing(true)}
+                  style={{ width: "100%", marginTop: 8 }}
+                >
+                  Изменить заказ
+                </Button>
+                <Button
+                  variant="secondary"
+                  onClick={() => setConfirmingCancel(true)}
+                  style={{ width: "100%", marginTop: 8 }}
+                >
+                  Отменить заказ
+                </Button>
+              </>
             ))}
         </Card>
       ) : (
@@ -299,6 +325,13 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
           </Field>
           <Field label="Телефон">
             <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+          </Field>
+          <Field label="Комментарий к заказу (необязательно)">
+            <Textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Например: домофон не работает, звоните по приезду"
+            />
           </Field>
 
           {products.length === 0 ? (

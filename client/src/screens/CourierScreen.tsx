@@ -7,6 +7,7 @@ import { buildDeliveryRoute, type RouteResult } from "../lib/route";
 import { build2gisRouteLink } from "../lib/twogis";
 import { compressImage } from "../lib/image";
 import { SUPPORT_MAX_LINK } from "../lib/config";
+import { OrderEditForm } from "../components/OrderEditForm";
 import { Screen, Card, Input, Button, Muted, Modal } from "../components/ui";
 
 export function CourierScreen() {
@@ -15,6 +16,7 @@ export function CourierScreen() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+  const [editingOrder, setEditingOrder] = useState(false);
   const [stockDraft, setStockDraft] = useState<Record<number, string>>({});
   const [nameDraft, setNameDraft] = useState<Record<number, string>>({});
   const [myPosition, setMyPosition] = useState<{ lat: number; lon: number } | null>(
@@ -196,6 +198,21 @@ export function CourierScreen() {
     await api.cancelOrder(orderId);
     setSelectedOrder(null);
     setConfirmCancelId(null);
+  }
+
+  async function handleEditOrder(data: {
+    name: string;
+    address: string;
+    phone: string;
+    comment: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  }) {
+    if (!selectedOrder) return;
+    const updated = await api.editOrder(selectedOrder.id, data);
+    setSelectedOrder(updated);
+    setEditingOrder(false);
   }
 
   async function handleSearchHistory() {
@@ -478,66 +495,91 @@ export function CourierScreen() {
           onClose={() => {
             setSelectedOrder(null);
             setConfirmCancelId(null);
+            setEditingOrder(false);
           }}
         >
-          <h2 style={{ margin: "0 0 4px" }}>{selectedOrder.name}</h2>
-          <Muted>{selectedOrder.address}</Muted>
-          <p style={{ margin: "12px 0" }}>Телефон: {selectedOrder.phone}</p>
-          <p style={{ margin: "0 0 16px" }}>
-            Товары:{" "}
-            {selectedOrder.items.map((i) => `${i.product.name} × ${i.quantity}`).join(", ")}
-          </p>
-          <a
-            href={build2gisRouteLink(selectedOrder)}
-            target="_blank"
-            rel="noreferrer"
-            className="button button-secondary"
-            style={{
-              display: "block",
-              textAlign: "center",
-              textDecoration: "none",
-              marginBottom:
-                selectedOrder.status !== "DELIVERED" && selectedOrder.status !== "PICKED_UP"
-                  ? 8
-                  : 0,
-            }}
-          >
-            Маршрут в 2ГИС
-          </a>
-          {selectedOrder.status !== "DELIVERED" && selectedOrder.status !== "PICKED_UP" && (
-            confirmCancelId === selectedOrder.id ? (
-              <>
-                <Muted>Точно отменить? Товар вернётся в остаток.</Muted>
-                <div className="row" style={{ marginTop: 8 }}>
-                  <Button
-                    variant="secondary"
-                    onClick={() => setConfirmCancelId(null)}
-                    style={{ flex: 1 }}
-                  >
-                    Не отменять
-                  </Button>
-                  <Button onClick={() => handleCancel(selectedOrder.id)} style={{ flex: 1 }}>
-                    Да, отменить
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <Button
-                  onClick={() => handleDelivered(selectedOrder.id)}
-                  style={{ width: "100%", marginBottom: 8 }}
-                >
-                  Заказ выдал
-                </Button>
-                <Button
-                  variant="secondary"
-                  onClick={() => setConfirmCancelId(selectedOrder.id)}
-                  style={{ width: "100%" }}
-                >
-                  Отменить заказ
-                </Button>
-              </>
-            )
+          {editingOrder ? (
+            <>
+              <h2 style={{ margin: "0 0 12px" }}>Изменить заказ</h2>
+              <OrderEditForm
+                order={selectedOrder}
+                products={products}
+                onSave={handleEditOrder}
+                onCancel={() => setEditingOrder(false)}
+              />
+            </>
+          ) : (
+            <>
+              <h2 style={{ margin: "0 0 4px" }}>{selectedOrder.name}</h2>
+              <Muted>{selectedOrder.address}</Muted>
+              <p style={{ margin: "12px 0" }}>Телефон: {selectedOrder.phone}</p>
+              <p style={{ margin: "0 0 16px" }}>
+                Товары:{" "}
+                {selectedOrder.items.map((i) => `${i.product.name} × ${i.quantity}`).join(", ")}
+              </p>
+              {selectedOrder.comment && (
+                <p style={{ margin: "0 0 16px" }}>Комментарий: {selectedOrder.comment}</p>
+              )}
+              <a
+                href={build2gisRouteLink(selectedOrder)}
+                target="_blank"
+                rel="noreferrer"
+                className="button button-secondary"
+                style={{
+                  display: "block",
+                  textAlign: "center",
+                  textDecoration: "none",
+                  marginBottom:
+                    selectedOrder.status === "NEW" || selectedOrder.status === "ON_THE_WAY"
+                      ? 8
+                      : 0,
+                }}
+              >
+                Маршрут в 2ГИС
+              </a>
+              {selectedOrder.status === "NEW" || selectedOrder.status === "ON_THE_WAY" && (
+                confirmCancelId === selectedOrder.id ? (
+                  <>
+                    <Muted>Точно отменить? Товар вернётся в остаток.</Muted>
+                    <div className="row" style={{ marginTop: 8 }}>
+                      <Button
+                        variant="secondary"
+                        onClick={() => setConfirmCancelId(null)}
+                        style={{ flex: 1 }}
+                      >
+                        Не отменять
+                      </Button>
+                      <Button onClick={() => handleCancel(selectedOrder.id)} style={{ flex: 1 }}>
+                        Да, отменить
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      onClick={() => handleDelivered(selectedOrder.id)}
+                      style={{ width: "100%", marginBottom: 8 }}
+                    >
+                      Заказ выдал
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setEditingOrder(true)}
+                      style={{ width: "100%", marginBottom: 8 }}
+                    >
+                      Изменить заказ
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => setConfirmCancelId(selectedOrder.id)}
+                      style={{ width: "100%" }}
+                    >
+                      Отменить заказ
+                    </Button>
+                  </>
+                )
+              )}
+            </>
           )}
         </Modal>
       )}

@@ -33,6 +33,9 @@ export type Order = {
   name: string;
   address: string;
   phone: string;
+  // Заметка покупателя к заказу (домофон, время доставки и т.п.) —
+  // необязательная.
+  comment: string | null;
   deliveryFee: number;
   lat: number;
   lon: number;
@@ -159,6 +162,7 @@ export const api = {
     name: string;
     address: string;
     phone: string;
+    comment?: string | null;
     lat: number;
     lon: number;
     items: { productId: number; quantity: number }[];
@@ -167,6 +171,42 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ ...data, courier: data.courierSlug }),
     }),
+
+  editOrder: (
+    orderId: number,
+    data: {
+      name: string;
+      address: string;
+      phone: string;
+      comment?: string | null;
+      lat: number;
+      lon: number;
+      items: { productId: number; quantity: number }[];
+    }
+  ) =>
+    ownerRequest<Order>(`/api/orders/${orderId}/edit`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
+  editOrderByCustomer: (
+    courierSlug: string,
+    orderId: number,
+    maxUserId: string,
+    data: {
+      name: string;
+      address: string;
+      phone: string;
+      comment?: string | null;
+      lat: number;
+      lon: number;
+      items: { productId: number; quantity: number }[];
+    }
+  ) =>
+    request<Order>(
+      `/api/orders/${orderId}/edit-by-customer?courier=${encodeURIComponent(courierSlug)}`,
+      { method: "POST", body: JSON.stringify({ ...data, maxUserId }) }
+    ),
 
   markDelivered: (orderId: number) =>
     ownerRequest<Order>(`/api/orders/${orderId}/delivered`, { method: "POST" }),

@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, TextareaHTMLAttributes } from "react";
 
 // Простые оформленные элементы вместо VKUI — у MAX нет своего обязательного
 // дизайн-кита (mini-app это просто HTML/CSS/JS), поэтому styling минимальный
@@ -33,6 +33,10 @@ export function Field({ label, children }: { label: string; children: ReactNode 
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input className="input" {...props} />;
+}
+
+export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return <textarea className="input" rows={2} {...props} />;
 }
 
 export function Button({
