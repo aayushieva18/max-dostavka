@@ -546,7 +546,7 @@ export function CourierScreen() {
               >
                 Маршрут в 2ГИС
               </a>
-              {selectedOrder.status === "NEW" || selectedOrder.status === "ON_THE_WAY" && (
+              {(selectedOrder.status === "NEW" || selectedOrder.status === "ON_THE_WAY") && (
                 confirmCancelId === selectedOrder.id ? (
                   <>
                     <Muted>Точно отменить? Товар вернётся в остаток.</Muted>
