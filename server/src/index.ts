@@ -9,6 +9,33 @@ import { PrismaClient, Prisma, type Courier } from "@prisma/client";
 // (например, от Prisma), где наружу должно уходить только общее сообщение.
 class UserFacingError extends Error {}
 
+// Настоящее сообщение покупателю прямо в MAX (через Bot API того же бота,
+// что открывает мини-приложение) — в отличие от живого обновления статуса
+// на экране, доходит, даже если покупатель уже закрыл приложение. Работает
+// только для покупателей, реально открывших мини-приложение ВНУТРИ MAX —
+// у них maxUserId это настоящий числовой id пользователя MAX; у заказов из
+// обычного браузера (без MAX) там либо случайный id браузера (с дефисами),
+// либо "manual:<телефон>" (ручной заказ хозяйки) — таким отправить нельзя,
+// у них нет открытого диалога с ботом. MAX_BOT_TOKEN берётся из настроек
+// бота на business.max.ru → "Токен доступа"; если переменная не задана,
+// просто тихо не отправляем (чтобы это не ломало саму отметку заказа).
+async function sendMaxMessage(maxUserId: string, text: string) {
+  const token = process.env.MAX_BOT_TOKEN;
+  if (!token || !/^\d+$/.test(maxUserId)) return;
+  try {
+    const res = await fetch(`https://platform-api2.max.ru/messages?user_id=${maxUserId}`, {
+      method: "POST",
+      headers: { Authorization: token, "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      console.error("MAX Bot API: не удалось отправить сообщение", res.status, await res.text());
+    }
+  } catch (e) {
+    console.error("MAX Bot API: ошибка запроса", e);
+  }
+}
+
 const prisma = new PrismaClient();
 const app = express();
 app.use(cors());
@@ -462,8 +489,13 @@ app.post("/api/orders/:id/accept", requireOwner, async (req, res) => {
   const order = await prisma.order.update({
     where: { id: Number(req.params.id), courierId: req.courierId },
     data: { status: "ON_THE_WAY" },
+    include: { customer: true },
   });
   io.to(courierRoom(req.courierId!)).emit("orders:updated");
+  sendMaxMessage(
+    order.customer.maxUserId,
+    "Спасибо за заказ! Уже готовим и привезём в ближайшее время."
+  );
   res.json(order);
 });
 
