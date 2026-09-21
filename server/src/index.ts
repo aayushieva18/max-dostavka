@@ -1,6 +1,11 @@
 import express from "express";
 import cors from "cors";
 import { createServer } from "http";
+import https from "https";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import path from "path";
+import { rootCertificates } from "tls";
 import { Server, type Socket } from "socket.io";
 import { PrismaClient, Prisma, type Courier } from "@prisma/client";
 
@@ -8,6 +13,19 @@ import { PrismaClient, Prisma, type Courier } from "@prisma/client";
 // понятный, без внутренних деталей) — в отличие от любой другой ошибки
 // (например, от Prisma), где наружу должно уходить только общее сообщение.
 class UserFacingError extends Error {}
+
+// Сайт MAX использует сертификат, выданный государственным "Russian Trusted
+// Root CA" (Минцифры России) — его нет в стандартном списке доверенных
+// организаций у Node.js (как и у большинства ПО вне России), поэтому обычный
+// fetch() к platform-api2.max.ru падает с "unable to get local issuer
+// certificate". Добавляем этот корневой сертификат отдельно, вместе со всеми
+// обычными (rootCertificates), не отключая проверку сертификата целиком.
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const russianTrustedRootCa = readFileSync(
+  path.join(__dirname, "../certs/russian_trusted_root_ca.pem"),
+  "utf8"
+);
+const maxApiAgent = new https.Agent({ ca: [...rootCertificates, russianTrustedRootCa] });
 
 // Настоящее сообщение покупателю прямо в MAX (через Bot API того же бота,
 // что открывает мини-приложение) — в отличие от живого обновления статуса
@@ -19,30 +37,54 @@ class UserFacingError extends Error {}
 // у них нет открытого диалога с ботом. MAX_BOT_TOKEN берётся из настроек
 // бота на business.max.ru → "Токен доступа"; если переменная не задана,
 // просто тихо не отправляем (чтобы это не ломало саму отметку заказа).
-async function sendMaxMessage(maxUserId: string, text: string) {
-  const token = process.env.MAX_BOT_TOKEN;
-  if (!token) {
-    console.log("MAX Bot API: пропущено — MAX_BOT_TOKEN не задан");
-    return;
-  }
-  if (!/^\d+$/.test(maxUserId)) {
-    console.log("MAX Bot API: пропущено — не настоящий id MAX", maxUserId);
-    return;
-  }
-  try {
-    const res = await fetch(`https://platform-api2.max.ru/messages?user_id=${maxUserId}`, {
-      method: "POST",
-      headers: { Authorization: token, "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!res.ok) {
-      console.error("MAX Bot API: не удалось отправить сообщение", res.status, await res.text());
-    } else {
-      console.log("MAX Bot API: сообщение отправлено", maxUserId);
+// Используем https.request (не fetch) — так можно указать свой доверенный
+// сертификат (maxApiAgent), у fetch() в Node такой возможности на запрос нет.
+function sendMaxMessage(maxUserId: string, text: string): Promise<void> {
+  return new Promise((resolve) => {
+    const token = process.env.MAX_BOT_TOKEN;
+    if (!token) {
+      console.log("MAX Bot API: пропущено — MAX_BOT_TOKEN не задан");
+      resolve();
+      return;
     }
-  } catch (e) {
-    console.error("MAX Bot API: ошибка запроса", e);
-  }
+    if (!/^\d+$/.test(maxUserId)) {
+      console.log("MAX Bot API: пропущено — не настоящий id MAX", maxUserId);
+      resolve();
+      return;
+    }
+    const body = JSON.stringify({ text });
+    const req = https.request(
+      {
+        hostname: "platform-api2.max.ru",
+        path: `/messages?user_id=${maxUserId}`,
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+        agent: maxApiAgent,
+      },
+      (res) => {
+        let responseBody = "";
+        res.on("data", (chunk) => (responseBody += chunk));
+        res.on("end", () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            console.log("MAX Bot API: сообщение отправлено", maxUserId);
+          } else {
+            console.error("MAX Bot API: не удалось отправить сообщение", res.statusCode, responseBody);
+          }
+          resolve();
+        });
+      }
+    );
+    req.on("error", (e) => {
+      console.error("MAX Bot API: ошибка запроса", e);
+      resolve();
+    });
+    req.write(body);
+    req.end();
+  });
 }
 
 const prisma = new PrismaClient();
