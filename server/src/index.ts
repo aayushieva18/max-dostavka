@@ -454,6 +454,19 @@ app.get("/api/orders/history", requireOwner, async (req, res) => {
   res.json(orders);
 });
 
+// Хозяйка нажала «заказ принят» — покупатель сразу видит у себя на экране
+// (через сокет "orders:updated") приветливое сообщение вместо простого
+// "оформлен". Реального чата/пуш-уведомлений в приложении нет — это самый
+// быстрый способ дать покупателю знать, что заказ увидели и уже готовят.
+app.post("/api/orders/:id/accept", requireOwner, async (req, res) => {
+  const order = await prisma.order.update({
+    where: { id: Number(req.params.id), courierId: req.courierId },
+    data: { status: "ON_THE_WAY" },
+  });
+  io.to(courierRoom(req.courierId!)).emit("orders:updated");
+  res.json(order);
+});
+
 // Хозяйка нажала «заказ выдал».
 app.post("/api/orders/:id/delivered", requireOwner, async (req, res) => {
   const order = await prisma.order.update({

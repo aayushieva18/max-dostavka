@@ -71,14 +71,24 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   // этого статус "терялся" при перезаходе — activeOrder раньше жил только в
   // памяти вкладки).
   useEffect(() => {
-    api
-      .getCustomerOrders(courierSlug, maxUserId)
-      .then((orders) => {
-        setOrderHistory(orders);
-        const current = orders.find((o) => o.status === "NEW" || o.status === "ON_THE_WAY" || o.status === "DELIVERED");
-        if (current) setActiveOrder(current);
-      })
-      .catch(() => {});
+    function reload() {
+      api
+        .getCustomerOrders(courierSlug, maxUserId)
+        .then((orders) => {
+          setOrderHistory(orders);
+          const current = orders.find((o) => o.status === "NEW" || o.status === "ON_THE_WAY" || o.status === "DELIVERED");
+          setActiveOrder(current ?? null);
+        })
+        .catch(() => {});
+    }
+    reload();
+    // Хозяйка меняет статус заказа (приняла, выдала) со своего экрана — без
+    // этой подписки покупатель узнал бы об этом только перезайдя в
+    // приложение заново, а не сразу.
+    socket.on("orders:updated", reload);
+    return () => {
+      socket.off("orders:updated", reload);
+    };
   }, [courierSlug, maxUserId]);
 
   useEffect(() => {
@@ -252,12 +262,13 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
             ]}
           />
           <p style={{ margin: "12px 0" }}>
-            Статус:{" "}
             {activeOrder.status === "DELIVERED"
-              ? "курьер рядом / выдал заказ"
-              : etaMinutes !== null
-              ? `курьер в пути, прибудет примерно через ${etaMinutes} мин`
-              : "курьер в пути"}
+              ? "Статус: курьер рядом / выдал заказ"
+              : activeOrder.status === "ON_THE_WAY"
+              ? etaMinutes !== null
+                ? `Спасибо за заказ! Уже везём, прибудем примерно через ${etaMinutes} мин.`
+                : "Спасибо за заказ! Уже готовим и привезём в ближайшее время."
+              : "Статус: заказ оформлен, ждём подтверждения от курьера"}
           </p>
           <p style={{ margin: "0 0 12px" }}>
             Доставка:{" "}

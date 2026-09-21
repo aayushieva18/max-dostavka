@@ -192,6 +192,11 @@ export function CourierScreen() {
     setConfirmDeleteId(null);
   }
 
+  async function handleAccept(orderId: number) {
+    const updated = await api.acceptOrder(orderId);
+    setSelectedOrder(updated);
+  }
+
   async function handleDelivered(orderId: number) {
     await api.markDelivered(orderId);
     setSelectedOrder(null);
@@ -308,7 +313,7 @@ export function CourierScreen() {
             id: order.id,
             lat: order.lat,
             lon: order.lon,
-            color: order.status === "DELIVERED" ? "#22C55E" : "#3B82F6",
+            color: order.status === "ON_THE_WAY" ? "#F97316" : "#3B82F6",
             onClick: () => setSelectedOrder(order),
           }))}
           route={route?.multiRoute}
@@ -461,6 +466,7 @@ export function CourierScreen() {
           orders.map((order, index) => {
             const eta = route?.stops.find((s) => s.index === index)?.etaMinutes;
             const items = formatOrderItems(order.items);
+            const statusLabel = order.status === "ON_THE_WAY" ? "принят" : "новый";
             return (
               <div
                 key={order.id}
@@ -471,7 +477,9 @@ export function CourierScreen() {
                   {order.name} — {order.address}
                 </div>
                 <div className="list-item-subtitle">
-                  {eta !== undefined ? `${items} — в пути ~${eta} мин` : items}
+                  {eta !== undefined
+                    ? `${items} — в пути ~${eta} мин`
+                    : `${items} — ${statusLabel}`}
                 </div>
               </div>
             );
@@ -617,12 +625,21 @@ export function CourierScreen() {
                   </>
                 ) : (
                   <>
-                    <Button
-                      onClick={() => handleDelivered(selectedOrder.id)}
-                      style={{ width: "100%", marginBottom: 8 }}
-                    >
-                      Заказ выдал
-                    </Button>
+                    {selectedOrder.status === "NEW" ? (
+                      <Button
+                        onClick={() => handleAccept(selectedOrder.id)}
+                        style={{ width: "100%", marginBottom: 8 }}
+                      >
+                        Заказ принят
+                      </Button>
+                    ) : (
+                      <Button
+                        onClick={() => handleDelivered(selectedOrder.id)}
+                        style={{ width: "100%", marginBottom: 8 }}
+                      >
+                        Заказ выдал
+                      </Button>
+                    )}
                     <Button
                       variant="secondary"
                       onClick={() => setEditingOrder(true)}

@@ -224,6 +224,9 @@ export const api = {
       { method: "POST", body: JSON.stringify({ ...data, maxUserId }) }
     ),
 
+  acceptOrder: (orderId: number) =>
+    ownerRequest<Order>(`/api/orders/${orderId}/accept`, { method: "POST" }),
+
   markDelivered: (orderId: number) =>
     ownerRequest<Order>(`/api/orders/${orderId}/delivered`, { method: "POST" }),
 
