@@ -499,6 +499,19 @@ app.post("/api/orders/:id/accept", requireOwner, async (req, res) => {
   res.json(order);
 });
 
+// ВРЕМЕННЫЙ эндпоинт (2026-09-21) — вернуть один тестовый заказ обратно в
+// NEW, независимо от текущего статуса (для проверки кнопки "Заказ принят").
+// Удалить сразу после использования.
+app.post("/api/admin/reset-one-to-new", requireOwner, async (req, res) => {
+  const { orderId } = req.body as { orderId: number };
+  const order = await prisma.order.update({
+    where: { id: orderId, courierId: req.courierId },
+    data: { status: "NEW" },
+  });
+  io.to(courierRoom(req.courierId!)).emit("orders:updated");
+  res.json(order);
+});
+
 // Хозяйка нажала «заказ выдал».
 app.post("/api/orders/:id/delivered", requireOwner, async (req, res) => {
   const order = await prisma.order.update({
