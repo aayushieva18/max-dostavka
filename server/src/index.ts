@@ -509,6 +509,22 @@ app.post("/api/orders/:id/delivered", requireOwner, async (req, res) => {
   res.json(order);
 });
 
+// ВРЕМЕННЫЙ эндпоинт (2026-09-21) — вернуть уже принятые заказы обратно в
+// NEW, чтобы хозяйка нажала "Заказ принят" ещё раз ПОСЛЕ того, как заработала
+// отправка настоящих сообщений через Bot API (раньше отправки не было —
+// принятые ранее заказы её так и не получили). Не трогает остальные поля,
+// только статус, и только для заказов именно этого курьера. Удалить сразу
+// после использования — постоянная возможность откатывать статус не нужна.
+app.post("/api/admin/reset-to-new", requireOwner, async (req, res) => {
+  const { orderIds } = req.body as { orderIds: number[] };
+  const result = await prisma.order.updateMany({
+    where: { id: { in: orderIds }, courierId: req.courierId, status: "ON_THE_WAY" },
+    data: { status: "NEW" },
+  });
+  io.to(courierRoom(req.courierId!)).emit("orders:updated");
+  res.json({ updated: result.count });
+});
+
 // Покупатель нажал «заказ забрал».
 app.post("/api/orders/:id/picked-up", resolveCourierBySlug, async (req, res) => {
   const order = await prisma.order.update({
