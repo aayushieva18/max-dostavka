@@ -9,6 +9,7 @@ import { compressImage } from "../lib/image";
 import { SUPPORT_MAX_LINK } from "../lib/config";
 import { OrderEditForm } from "../components/OrderEditForm";
 import { formatOrderItems, formatOrderDate } from "../lib/orderFormat";
+import { telHref } from "../lib/phone";
 import { Screen, Card, Input, Button, Muted, Modal } from "../components/ui";
 
 export function CourierScreen() {
@@ -581,7 +582,9 @@ export function CourierScreen() {
             <>
               <h2 style={{ margin: "0 0 4px" }}>{selectedOrder.name}</h2>
               <Muted>{selectedOrder.address}</Muted>
-              <p style={{ margin: "12px 0" }}>Телефон: {selectedOrder.phone}</p>
+              <p style={{ margin: "12px 0" }}>
+                Телефон: <a href={telHref(selectedOrder.phone)}>{selectedOrder.phone}</a>
+              </p>
               <p style={{ margin: "0 0 16px" }}>
                 Товары:{" "}
                 {formatOrderItems(selectedOrder.items)}
