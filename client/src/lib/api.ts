@@ -172,6 +172,22 @@ export const api = {
       body: JSON.stringify({ ...data, courier: data.courierSlug }),
     }),
 
+  // Хозяйка оформляет заказ сама — для покупателей, у которых не получилось
+  // сделать это через приложение (например, позвонили по телефону).
+  createManualOrder: (data: {
+    name: string;
+    address: string;
+    phone: string;
+    comment?: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  }) =>
+    ownerRequest<Order>("/api/orders/manual", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   editOrder: (
     orderId: number,
     data: {

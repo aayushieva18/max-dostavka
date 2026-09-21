@@ -19,6 +19,7 @@ export function CourierScreen() {
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [editingOrder, setEditingOrder] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
+  const [creatingManualOrder, setCreatingManualOrder] = useState(false);
   const [stockDraft, setStockDraft] = useState<Record<number, string>>({});
   const [nameDraft, setNameDraft] = useState<Record<number, string>>({});
   const [myPosition, setMyPosition] = useState<{ lat: number; lon: number } | null>(
@@ -217,6 +218,37 @@ export function CourierScreen() {
     setEditingOrder(false);
   }
 
+  async function handleCreateManualOrder(data: {
+    name: string;
+    address: string;
+    phone: string;
+    comment: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  }) {
+    await api.createManualOrder(data);
+    setCreatingManualOrder(false);
+  }
+
+  // "Пустой" заказ — только чтобы отдать общей форме OrderEditForm её
+  // обязательный order (форма считывает из него только начальные значения
+  // полей и order.items для лимита остатка "уже занято этим заказом" —
+  // для нового заказа он просто пустой список).
+  const blankOrder: Order = {
+    id: 0,
+    status: "NEW",
+    name: "",
+    address: "",
+    phone: "",
+    comment: null,
+    deliveryFee: me?.deliveryFee ?? 0,
+    lat: 0,
+    lon: 0,
+    createdAt: new Date().toISOString(),
+    items: [],
+  };
+
   async function handleSearchHistory() {
     setLoadingHistory(true);
     try {
@@ -397,6 +429,29 @@ export function CourierScreen() {
             />
           </label>
         </div>
+      </Card>
+
+      <Card title="Заказ по телефону">
+        {creatingManualOrder ? (
+          <OrderEditForm
+            order={blankOrder}
+            products={products}
+            onSave={handleCreateManualOrder}
+            onCancel={() => setCreatingManualOrder(false)}
+            submitLabel="Оформить заказ"
+          />
+        ) : (
+          <>
+            <Muted>Для покупателей, у которых не получилось заказать самим.</Muted>
+            <Button
+              variant="secondary"
+              onClick={() => setCreatingManualOrder(true)}
+              style={{ width: "100%", marginTop: 8 }}
+            >
+              Оформить заказ вручную
+            </Button>
+          </>
+        )}
       </Card>
 
       <Card title="Список заказов">

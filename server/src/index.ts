@@ -249,9 +249,71 @@ app.get("/api/customer-orders/:maxUserId", resolveCourierBySlug, async (req, res
 
 // --- Заказы -------------------------------------------------------------
 
-// Оформление заказа. Проверяет остатки на каждый товар и отклоняет
-// заказ целиком, если чего-то уже не хватает (чтобы не разъезжались
-// "частично оформленные" заказы).
+// Оформление заказа — общая логика и для обычной формы покупателя, и для
+// ручного оформления хозяйкой (когда покупатель звонит сам, потому что не
+// смог разобраться с приложением). Проверяет остатки на каждый товар и
+// отклоняет заказ целиком, если чего-то уже не хватает (чтобы не
+// разъезжались "частично оформленные" заказы).
+async function createOrderInTransaction(
+  tx: Prisma.TransactionClient,
+  courierId: number,
+  deliveryFee: number,
+  data: {
+    maxUserId: string;
+    name: string;
+    address: string;
+    phone: string;
+    comment?: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  }
+) {
+  // Проверка остатка и списание — одним атомарным запросом на товар (а не
+  // "сначала проверить, потом списать" отдельно), чтобы не было случая,
+  // когда между проверкой и списанием кто-то другой успел разобрать тот же
+  // товар. Заодно вдвое короче транзакция — раньше на каждый товар уходило
+  // два обращения к базе, теперь одно.
+  for (const item of data.items) {
+    const decremented = await tx.product.updateMany({
+      where: { id: item.productId, courierId, availableQty: { gte: item.quantity } },
+      data: { availableQty: { decrement: item.quantity } },
+    });
+    if (decremented.count === 0) {
+      const product = await tx.product.findUnique({ where: { id: item.productId, courierId } });
+      throw new UserFacingError(
+        product ? `Товара «${product.name}» не хватает в наличии` : "Такого товара не существует"
+      );
+    }
+  }
+
+  const customer = await tx.customer.upsert({
+    where: { courierId_maxUserId: { courierId, maxUserId: data.maxUserId } },
+    update: { name: data.name, address: data.address, phone: data.phone },
+    create: { courierId, maxUserId: data.maxUserId, name: data.name, address: data.address, phone: data.phone },
+  });
+
+  return tx.order.create({
+    data: {
+      courierId,
+      customerId: customer.id,
+      // Снимок имени/адреса/телефона/стоимости доставки на момент ИМЕННО
+      // ЭТОГО заказа — не через customer/courier напрямую, потому что их
+      // данные могут поменяться позже (адрес — при следующем заказе, цена
+      // доставки — если курьер её изменит).
+      name: data.name,
+      address: data.address,
+      phone: data.phone,
+      comment: data.comment?.trim() || null,
+      deliveryFee,
+      lat: data.lat,
+      lon: data.lon,
+      items: { create: data.items },
+    },
+    include: { items: true },
+  });
+}
+
 app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
   const courierId = req.courierId!;
   const { maxUserId, name, address, phone, comment, lat, lon, items } = req.body as {
@@ -266,57 +328,69 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
   };
 
   try {
-    const result = await prisma.$transaction(async (tx) => {
-      // Проверка остатка и списание — одним атомарным запросом на товар
-      // (а не "сначала проверить, потом списать" отдельно), чтобы не было
-      // случая, когда между проверкой и списанием кто-то другой успел
-      // разобрать тот же товар. Заодно вдвое короче транзакция — раньше
-      // на каждый товар уходило два обращения к базе, теперь одно.
-      for (const item of items) {
-        const decremented = await tx.product.updateMany({
-          where: { id: item.productId, courierId, availableQty: { gte: item.quantity } },
-          data: { availableQty: { decrement: item.quantity } },
-        });
-        if (decremented.count === 0) {
-          const product = await tx.product.findUnique({ where: { id: item.productId, courierId } });
-          throw new UserFacingError(
-            product ? `Товара «${product.name}» не хватает в наличии` : "Такого товара не существует"
-          );
-        }
-      }
-
-      const customer = await tx.customer.upsert({
-        where: { courierId_maxUserId: { courierId, maxUserId } },
-        update: { name, address, phone },
-        create: { courierId, maxUserId, name, address, phone },
-      });
-
-      return tx.order.create({
-        data: {
-          courierId,
-          customerId: customer.id,
-          // Снимок имени/адреса/телефона/стоимости доставки на момент
-          // ИМЕННО ЭТОГО заказа — не через customer/courier напрямую,
-          // потому что их данные могут поменяться позже (адрес — при
-          // следующем заказе, цена доставки — если курьер её изменит).
-          // req.courier взят из middleware, а не из базы ещё раз — короче
-          // транзакция.
+    const result = await prisma.$transaction(
+      (tx) =>
+        createOrderInTransaction(tx, courierId, req.courier!.deliveryFee, {
+          maxUserId,
           name,
           address,
           phone,
-          comment: comment?.trim() || null,
-          deliveryFee: req.courier!.deliveryFee,
+          comment,
           lat,
           lon,
-          items: { create: items },
-        },
-        include: { items: true },
-      });
-    // Стандартный лимит Prisma на такую транзакцию — 5 секунд, и с базой в
-    // облаке (не на этом же компьютере) при заказе из нескольких товаров
-    // этого впритык не хватало ("transaction not found" — по сути истёк
-    // срок). Увеличиваем с запасом.
-    }, { timeout: 15000 });
+          items,
+        }),
+      // Стандартный лимит Prisma на такую транзакцию — 5 секунд, и с базой в
+      // облаке (не на этом же компьютере) при заказе из нескольких товаров
+      // этого впритык не хватало ("transaction not found" — по сути истёк
+      // срок). Увеличиваем с запасом.
+      { timeout: 15000 }
+    );
+
+    io.to(courierRoom(courierId)).emit("orders:updated");
+    io.to(courierRoom(courierId)).emit("products:updated");
+    res.json(result);
+  } catch (e) {
+    console.error(e);
+    res.status(400).json({
+      error: e instanceof UserFacingError ? e.message : "Не удалось оформить заказ",
+    });
+  }
+});
+
+// Хозяйка оформляет заказ сама — для покупателей, у которых не получилось
+// сделать это через приложение (например, позвонили по телефону). Такой
+// покупатель определяется по номеру телефона (а не по maxUserId из MAX,
+// которого у него нет) — так повторные звонки того же человека попадают в
+// того же "покупателя", и его прошлые заказы видны в истории вместе.
+app.post("/api/orders/manual", requireOwner, async (req, res) => {
+  const courierId = req.courierId!;
+  const { name, address, phone, comment, lat, lon, items } = req.body as {
+    name: string;
+    address: string;
+    phone: string;
+    comment?: string | null;
+    lat: number;
+    lon: number;
+    items: { productId: number; quantity: number }[];
+  };
+  const maxUserId = `manual:${phone.trim()}`;
+
+  try {
+    const result = await prisma.$transaction(
+      (tx) =>
+        createOrderInTransaction(tx, courierId, req.courier!.deliveryFee, {
+          maxUserId,
+          name,
+          address,
+          phone,
+          comment,
+          lat,
+          lon,
+          items,
+        }),
+      { timeout: 15000 }
+    );
 
     io.to(courierRoom(courierId)).emit("orders:updated");
     io.to(courierRoom(courierId)).emit("products:updated");

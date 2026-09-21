@@ -21,12 +21,17 @@ type Props = {
   products: Product[];
   onSave: (data: SaveData) => Promise<void>;
   onCancel: () => void;
+  // Тот же набор полей используется и для правки уже оформленного заказа
+  // ("Сохранить" по умолчанию), и для оформления нового заказа хозяйкой
+  // вручную (тогда передаётся, например, "Оформить заказ") — order в этом
+  // случае просто "пустой" (пустые поля, order.items === []).
+  submitLabel?: string;
 };
 
 // Общая форма редактирования уже оформленного заказа — одна и та же что для
 // покупателя (свой заказ), что для хозяйки (любой заказ со своего экрана):
 // по итоговому решению обе стороны правят одинаковый набор полей.
-export function OrderEditForm({ order, products, onSave, onCancel }: Props) {
+export function OrderEditForm({ order, products, onSave, onCancel, submitLabel = "Сохранить" }: Props) {
   const initialAddress = splitAddress(order.address);
   const [name, setName] = useState(order.name);
   const [settlement, setSettlement] = useState(initialAddress.settlement);
@@ -143,7 +148,7 @@ export function OrderEditForm({ order, products, onSave, onCancel }: Props) {
           Отмена
         </Button>
         <Button onClick={handleSave} disabled={saving} style={{ flex: 1 }}>
-          {saving ? "Сохраняем…" : "Сохранить"}
+          {saving ? "Сохраняем…" : submitLabel}
         </Button>
       </div>
     </div>
