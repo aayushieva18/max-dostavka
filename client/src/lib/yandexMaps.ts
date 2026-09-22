@@ -90,6 +90,23 @@ export type GeocodeResult = {
 
 type RawGeocodeResult = Omit<GeocodeResult, "approximate">;
 
+// Некоторые названия сёл в Забайкальском крае встречаются дважды — один раз
+// как маленькое село в другом, дальнем районе, и один раз как более крупный
+// населённый пункт именно в зоне доставки этого курьера. Голое название без
+// уточнения обычный геокодер иногда находит не там (у "Могойтуй" так и
+// произошло: маленькое село в Акшинском округе перевесило по внутренним
+// правилам геокодера настоящий районный центр Агинского округа, за сотни км
+// в другую сторону). Используется только в самом крайнем случае (см. фолбэк
+// ниже, когда даже улица не находится) — при обычном полном адресе со
+// найденной улицей эта подмена не нужна, геокодер и так находит верное место.
+const KNOWN_SETTLEMENT_OVERRIDES: Record<string, { lat: number; lon: number; label: string }> = {
+  могойтуй: {
+    lat: 51.2831177,
+    lon: 114.9299468,
+    label: "Могойтуй, Забайкальский край (районный центр Агинского округа)",
+  },
+};
+
 // Переводит текстовый адрес в координаты и разбирает его на понятные части.
 // Сначала пробует по-человечески развёрнутый адрес через Яндекс Карты (жёстко
 // ограничено зоной доставки — см. DELIVERY_REGION_BOUNDS, — адрес из другого
@@ -130,6 +147,11 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
   // хозяйке нужно будет отличать их не по карте, а по списку.
   const { settlement } = splitAddress(address);
   if (settlement.trim()) {
+    const known = KNOWN_SETTLEMENT_OVERRIDES[settlement.trim().toLowerCase()];
+    if (known) {
+      return { lat: known.lat, lon: known.lon, addressLine: known.label, hasLocality: true, approximate: true };
+    }
+
     const viaYandexSettlement = await geocodeWithYandex(settlement).catch(() => null);
     if (viaYandexSettlement) return { ...viaYandexSettlement, approximate: true };
 
