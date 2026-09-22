@@ -290,6 +290,18 @@ export function CourierScreen() {
     ? `${window.location.origin}${window.location.pathname}?courier=${me.slug}`
     : null;
 
+  // Сколько всего товара нужно собрать по всем активным заказам сразу — по
+  // каждому товару отдельно (сколько ЕДЕНИЦ), плюс общий итог, чтобы не
+  // складывать вручную по каждому заказу перед выездом.
+  const productTotals = new Map<string, number>();
+  let totalItemsCount = 0;
+  for (const order of orders) {
+    for (const item of order.items) {
+      totalItemsCount += item.quantity;
+      productTotals.set(item.product.name, (productTotals.get(item.product.name) ?? 0) + item.quantity);
+    }
+  }
+
   return (
     <Screen title={me ? me.name : "Заказы на сегодня"}>
       {customerLink && (
@@ -475,6 +487,24 @@ export function CourierScreen() {
           </>
         )}
       </Card>
+
+      {orders.length > 0 && (
+        <Card title="Сколько собрать по активным заказам">
+          {[...productTotals.entries()].map(([name, qty]) => (
+            <div key={name} className="row" style={{ justifyContent: "space-between" }}>
+              <span>{name}</span>
+              <span style={{ fontWeight: 500 }}>{qty} шт.</span>
+            </div>
+          ))}
+          <div
+            className="row"
+            style={{ justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}
+          >
+            <span>Итого</span>
+            <span style={{ fontWeight: 600 }}>{totalItemsCount} шт.</span>
+          </div>
+        </Card>
+      )}
 
       {orders.some((o) => o.approxLocation) && (
         <Card title="Заказы с неточным адресом">
