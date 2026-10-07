@@ -43,6 +43,8 @@ export type Order = {
   // размечен по улицам ни у одного геокодера). Если таких заказов в одном
   // селе несколько, все точки лягут друг на друга на карте.
   approxLocation: boolean;
+  // Хозяйка отметила, что товар по заказу уже собран (статус не меняет).
+  collected: boolean;
   createdAt: string;
   items: OrderItem[];
 };
@@ -234,6 +236,12 @@ export const api = {
 
   acceptOrder: (orderId: number) =>
     ownerRequest<Order>(`/api/orders/${orderId}/accept`, { method: "POST" }),
+
+  setCollected: (orderId: number, collected: boolean) =>
+    ownerRequest<Order>(`/api/orders/${orderId}/collected`, {
+      method: "POST",
+      body: JSON.stringify({ collected }),
+    }),
 
   markDelivered: (orderId: number) =>
     ownerRequest<Order>(`/api/orders/${orderId}/delivered`, { method: "POST" }),

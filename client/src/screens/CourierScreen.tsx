@@ -203,6 +203,14 @@ export function CourierScreen() {
     }
   }
 
+  async function handleCollected(orderId: number, collected: boolean) {
+    try {
+      await api.setCollected(orderId, collected);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Не удалось отметить заказ");
+    }
+  }
+
   async function handleDelivered(orderId: number) {
     try {
       await api.markDelivered(orderId);
@@ -267,6 +275,7 @@ export function CourierScreen() {
     lat: 0,
     lon: 0,
     approxLocation: false,
+    collected: false,
     createdAt: new Date().toISOString(),
     items: [],
   };
@@ -292,15 +301,21 @@ export function CourierScreen() {
 
   // Сколько всего товара нужно собрать по всем активным заказам сразу — по
   // каждому товару отдельно (сколько ЕДЕНИЦ), плюс общий итог, чтобы не
-  // складывать вручную по каждому заказу перед выездом.
-  const productTotals = new Map<string, number>();
-  let totalItemsCount = 0;
-  for (const order of orders) {
-    for (const item of order.items) {
-      totalItemsCount += item.quantity;
-      productTotals.set(item.product.name, (productTotals.get(item.product.name) ?? 0) + item.quantity);
+  // складывать вручную по каждому заказу перед выездом. Заказы, которые
+  // хозяйка уже отметила «заказ собран», считаются отдельно — в «Собранных».
+  function sumItems(list: Order[]) {
+    const totals = new Map<string, number>();
+    let total = 0;
+    for (const order of list) {
+      for (const item of order.items) {
+        total += item.quantity;
+        totals.set(item.product.name, (totals.get(item.product.name) ?? 0) + item.quantity);
+      }
     }
+    return { totals, total };
   }
+  const toCollect = sumItems(orders.filter((o) => !o.collected));
+  const collected = sumItems(orders.filter((o) => o.collected));
 
   return (
     <Screen title={me ? me.name : "Заказы на сегодня"}>
@@ -488,21 +503,15 @@ export function CourierScreen() {
         )}
       </Card>
 
-      {orders.length > 0 && (
+      {orders.some((o) => o.collected) && (
+        <Card title="Собранные заказы">
+          <ItemTotals totals={collected.totals} total={collected.total} />
+        </Card>
+      )}
+
+      {orders.some((o) => !o.collected) && (
         <Card title="Сколько собрать по активным заказам">
-          {[...productTotals.entries()].map(([name, qty]) => (
-            <div key={name} className="row" style={{ justifyContent: "space-between" }}>
-              <span>{name}</span>
-              <span style={{ fontWeight: 500 }}>{qty} шт.</span>
-            </div>
-          ))}
-          <div
-            className="row"
-            style={{ justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}
-          >
-            <span>Итого</span>
-            <span style={{ fontWeight: 600 }}>{totalItemsCount} шт.</span>
-          </div>
+          <ItemTotals totals={toCollect.totals} total={toCollect.total} />
         </Card>
       )}
 
@@ -549,6 +558,17 @@ export function CourierScreen() {
                     ? `${items} — в пути ~${eta} мин`
                     : `${items} — ${statusLabel}`}
                 </div>
+                <Button
+                  variant={order.collected ? "secondary" : "primary"}
+                  onClick={(e) => {
+                    // Чтобы нажатие на кнопку не открывало детали заказа.
+                    e.stopPropagation();
+                    handleCollected(order.id, !order.collected);
+                  }}
+                  style={{ width: "100%", marginTop: 8 }}
+                >
+                  {order.collected ? "Собран ✓ (нажми, чтобы вернуть)" : "Заказ собран"}
+                </Button>
               </div>
             );
           })
@@ -748,5 +768,26 @@ export function CourierScreen() {
         <ErrorBanner onClose={() => setActionError(null)}>{actionError}</ErrorBanner>
       )}
     </Screen>
+  );
+}
+
+// Список «товар — сколько штук» и строка «Итого» под ним.
+function ItemTotals({ totals, total }: { totals: Map<string, number>; total: number }) {
+  return (
+    <>
+      {[...totals.entries()].map(([name, qty]) => (
+        <div key={name} className="row" style={{ justifyContent: "space-between" }}>
+          <span>{name}</span>
+          <span style={{ fontWeight: 500 }}>{qty} шт.</span>
+        </div>
+      ))}
+      <div
+        className="row"
+        style={{ justifyContent: "space-between", marginTop: 8, paddingTop: 8, borderTop: "1px solid var(--border)" }}
+      >
+        <span>Итого</span>
+        <span style={{ fontWeight: 600 }}>{total} шт.</span>
+      </div>
+    </>
   );
 }

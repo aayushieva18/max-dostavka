@@ -556,6 +556,17 @@ app.post("/api/orders/:id/accept", requireOwner, async (req, res) => {
   res.json(order);
 });
 
+// Хозяйка нажала «заказ собран» (или вернула заказ в несобранные, если
+// нажала по ошибке) — на статус заказа не влияет.
+app.post("/api/orders/:id/collected", requireOwner, async (req, res) => {
+  const order = await prisma.order.update({
+    where: { id: Number(req.params.id), courierId: req.courierId },
+    data: { collected: req.body?.collected !== false },
+  });
+  io.to(courierRoom(req.courierId!)).emit("orders:updated");
+  res.json(order);
+});
+
 // Хозяйка нажала «заказ выдал».
 app.post("/api/orders/:id/delivered", requireOwner, async (req, res) => {
   const order = await prisma.order.update({
