@@ -327,6 +327,54 @@ app.get("/api/customer-orders/:maxUserId", resolveCourierBySlug, async (req, res
 
 // --- Заказы -------------------------------------------------------------
 
+// Предзаказы: покупатель может заказать на дату не раньше чем через
+// PREORDER_MIN_DAYS дней, не глядя на остатки (товар приготовят под
+// заказ). Хозяйка переводит в активные предзаказы на ближайшие
+// PREORDER_WEEK_DAYS дней — тогда списывается остаток.
+const PREORDER_MIN_DAYS = 8;
+const PREORDER_WEEK_DAYS = 7;
+
+// Сегодняшняя дата по времени Читы (UTC+9, без перехода на летнее время) в
+// виде "YYYY-MM-DD", плюс сколько-то дней — сервер может стоять в другом
+// часовом поясе, а "день" для покупателей и хозяйки — читинский.
+function chitaDatePlusDays(days: number): string {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000 + days * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+// Проверка даты предзаказа: формат и не раньше минимальной (покупателю —
+// через PREORDER_MIN_DAYS дней, хозяйке — любая начиная с завтра).
+function validatePreorderDate(date: unknown, minDays: number): string {
+  if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new UserFacingError("Неверная дата предзаказа");
+  }
+  if (date < chitaDatePlusDays(minDays)) {
+    throw new UserFacingError(
+      minDays > 1
+        ? `Предзаказ можно сделать не раньше чем на ${minDays}-й день от сегодня`
+        : "Дата предзаказа должна быть в будущем"
+    );
+  }
+  return date;
+}
+
+// Для предзаказа остаток не проверяется — но товар должен быть настоящим,
+// этого курьера и не удалённым, а количество — разумным целым числом.
+async function validatePreorderItems(
+  tx: Prisma.TransactionClient,
+  courierId: number,
+  items: { productId: number; quantity: number }[]
+) {
+  for (const item of items) {
+    if (!Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 999) {
+      throw new UserFacingError("Неверное количество товара");
+    }
+    const product = await tx.product.findUnique({ where: { id: item.productId, courierId } });
+    if (!product || product.archived) throw new UserFacingError("Такого товара не существует");
+  }
+}
+
 // Оформление заказа — общая логика и для обычной формы покупателя, и для
 // ручного оформления хозяйкой (когда покупатель звонит сам, потому что не
 // смог разобраться с приложением). Проверяет остатки на каждый товар и
@@ -346,14 +394,20 @@ async function createOrderInTransaction(
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    // Уже проверенная дата предзаказа (validatePreorderDate) — если есть,
+    // остаток не списывается, заказ попадает в предзаказы.
+    preorderDate?: string | null;
   }
 ) {
+  if (data.preorderDate) {
+    await validatePreorderItems(tx, courierId, data.items);
+  }
   // Проверка остатка и списание — одним атомарным запросом на товар (а не
   // "сначала проверить, потом списать" отдельно), чтобы не было случая,
   // когда между проверкой и списанием кто-то другой успел разобрать тот же
   // товар. Заодно вдвое короче транзакция — раньше на каждый товар уходило
   // два обращения к базе, теперь одно.
-  for (const item of data.items) {
+  for (const item of data.preorderDate ? [] : data.items) {
     const decremented = await tx.product.updateMany({
       where: { id: item.productId, courierId, availableQty: { gte: item.quantity } },
       data: { availableQty: { decrement: item.quantity } },
@@ -388,6 +442,7 @@ async function createOrderInTransaction(
       lat: data.lat,
       lon: data.lon,
       approxLocation: data.approxLocation ?? false,
+      ...(data.preorderDate ? { status: "PREORDER" as const, preorderDate: data.preorderDate } : {}),
       items: { create: data.items },
     },
     include: { items: true },
@@ -396,7 +451,7 @@ async function createOrderInTransaction(
 
 app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
   const courierId = req.courierId!;
-  const { maxUserId, name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
+  const { maxUserId, name, address, phone, comment, lat, lon, approxLocation, items, preorderDate } = req.body as {
     maxUserId: string;
     name: string;
     address: string;
@@ -406,9 +461,11 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate?: string | null;
   };
 
   try {
+    const checkedPreorderDate = preorderDate ? validatePreorderDate(preorderDate, PREORDER_MIN_DAYS) : null;
     const result = await prisma.$transaction(
       (tx) =>
         createOrderInTransaction(tx, courierId, req.courier!.deliveryFee, {
@@ -421,6 +478,7 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
           lon,
           approxLocation,
           items,
+          preorderDate: checkedPreorderDate,
         }),
       // Стандартный лимит Prisma на такую транзакцию — 5 секунд, и с базой в
       // облаке (не на этом же компьютере) при заказе из нескольких товаров
@@ -447,7 +505,7 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
 // того же "покупателя", и его прошлые заказы видны в истории вместе.
 app.post("/api/orders/manual", requireOwner, async (req, res) => {
   const courierId = req.courierId!;
-  const { name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
+  const { name, address, phone, comment, lat, lon, approxLocation, items, preorderDate } = req.body as {
     name: string;
     address: string;
     phone: string;
@@ -456,10 +514,12 @@ app.post("/api/orders/manual", requireOwner, async (req, res) => {
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate?: string | null;
   };
   const maxUserId = `manual:${phone.trim()}`;
 
   try {
+    const checkedPreorderDate = preorderDate ? validatePreorderDate(preorderDate, 1) : null;
     const result = await prisma.$transaction(
       (tx) =>
         createOrderInTransaction(tx, courierId, req.courier!.deliveryFee, {
@@ -472,6 +532,7 @@ app.post("/api/orders/manual", requireOwner, async (req, res) => {
           lon,
           approxLocation,
           items,
+          preorderDate: checkedPreorderDate,
         }),
       { timeout: 15000 }
     );
@@ -496,6 +557,90 @@ app.get("/api/orders", requireOwner, async (req, res) => {
     orderBy: { createdAt: "asc" },
   });
   res.json(orders);
+});
+
+// Предзаказы хозяйки — по дате доставки, ближайшие сверху.
+app.get("/api/orders/preorders", requireOwner, async (req, res) => {
+  const orders = await prisma.order.findMany({
+    where: { courierId: req.courierId, status: "PREORDER" },
+    include: { items: { include: { product: true } } },
+    orderBy: [{ preorderDate: "asc" }, { createdAt: "asc" }],
+  });
+  res.json(orders);
+});
+
+// Перевод предзаказа в обычные активные заказы — со списанием остатка. Если
+// товара в остатке меньше, чем в предзаказе, остаток становится 0, а
+// недостача возвращается хозяйке предупреждением — сам перевод всё равно
+// происходит (под предзаказ товар готовят в любом случае).
+type Shortage = { name: string; missing: number };
+
+async function activatePreorderInTransaction(
+  tx: Prisma.TransactionClient,
+  id: number,
+  courierId: number
+): Promise<Shortage[]> {
+  const order = await tx.order.findUnique({ where: { id, courierId }, include: { items: true } });
+  if (!order || order.status !== "PREORDER") throw new UserFacingError("Этот предзаказ уже не найден");
+  const shortages: Shortage[] = [];
+  for (const item of order.items) {
+    const product = await tx.product.findUnique({ where: { id: item.productId } });
+    if (!product) continue;
+    const taken = Math.min(product.availableQty, item.quantity);
+    if (taken < item.quantity) shortages.push({ name: product.name, missing: item.quantity - taken });
+    if (taken > 0) {
+      await tx.product.update({
+        where: { id: product.id },
+        data: { availableQty: { decrement: taken } },
+      });
+    }
+  }
+  await tx.order.update({ where: { id }, data: { status: "NEW" } });
+  return shortages;
+}
+
+app.post("/api/orders/:id/activate", requireOwner, async (req, res) => {
+  try {
+    const shortages = await prisma.$transaction(
+      (tx) => activatePreorderInTransaction(tx, Number(req.params.id), req.courierId!),
+      { timeout: 15000 }
+    );
+    io.to(courierRoom(req.courierId!)).emit("orders:updated");
+    io.to(courierRoom(req.courierId!)).emit("products:updated");
+    res.json({ shortages });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось перевести предзаказ" });
+  }
+});
+
+// Все предзаказы на ближайшие PREORDER_WEEK_DAYS дней (и просроченные, если
+// такие остались) — разом в активные, например сразу после загрузки остатков.
+app.post("/api/orders/activate-week", requireOwner, async (req, res) => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: {
+        courierId: req.courierId,
+        status: "PREORDER",
+        preorderDate: { lte: chitaDatePlusDays(PREORDER_WEEK_DAYS) },
+      },
+      orderBy: [{ preorderDate: "asc" }, { createdAt: "asc" }],
+    });
+    const shortages = await prisma.$transaction(
+      async (tx) => {
+        const all: Shortage[] = [];
+        for (const order of orders) {
+          all.push(...(await activatePreorderInTransaction(tx, order.id, req.courierId!)));
+        }
+        return all;
+      },
+      { timeout: 60000 }
+    );
+    io.to(courierRoom(req.courierId!)).emit("orders:updated");
+    io.to(courierRoom(req.courierId!)).emit("products:updated");
+    res.json({ shortages, count: orders.length });
+  } catch (e) {
+    res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось перевести предзаказы" });
+  }
 });
 
 // История — уже завершённые заказы (выданы/забраны/отменены), с поиском по
@@ -606,7 +751,7 @@ async function loadEditableOrder(
   if (requireMaxUserId !== undefined && existing.customer.maxUserId !== requireMaxUserId) {
     throw new UserFacingError("Это не твой заказ");
   }
-  if (existing.status !== "NEW" && existing.status !== "ON_THE_WAY") {
+  if (existing.status !== "NEW" && existing.status !== "ON_THE_WAY" && existing.status !== "PREORDER") {
     throw new UserFacingError(`Этот заказ уже нельзя ${actionVerb}`);
   }
   return existing;
@@ -614,6 +759,7 @@ async function loadEditableOrder(
 
 // Отмена заказа — общая логика для курьера и для самого покупателя: товар
 // при отмене возвращается в остаток (он был списан при оформлении заказа).
+// У предзаказа остаток ещё не списывался — возвращать нечего.
 async function cancelOrderInTransaction(
   tx: Prisma.TransactionClient,
   id: number,
@@ -621,7 +767,7 @@ async function cancelOrderInTransaction(
   requireMaxUserId?: string
 ) {
   const existing = await loadEditableOrder(tx, id, courierId, requireMaxUserId, "отменить");
-  for (const item of existing.items) {
+  for (const item of existing.status === "PREORDER" ? [] : existing.items) {
     await tx.product.update({
       where: { id: item.productId },
       data: { availableQty: { increment: item.quantity } },
@@ -683,14 +829,22 @@ async function editOrderInTransaction(
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    // Новая дата — только для предзаказа (у обычного заказа игнорируется);
+    // уже проверена вызывающим (validatePreorderDate).
+    preorderDate?: string | null;
   },
   requireMaxUserId?: string
 ) {
   const existing = await loadEditableOrder(tx, id, courierId, requireMaxUserId, "изменить");
+  // У предзаказа остаток не списан — состав меняем свободно, без пересчёта.
+  const isPreorder = existing.status === "PREORDER";
+  if (isPreorder) await validatePreorderItems(tx, courierId, data.items);
 
   const oldQtyByProduct = new Map(existing.items.map((i) => [i.productId, i.quantity]));
   const newQtyByProduct = new Map(data.items.map((i) => [i.productId, i.quantity]));
-  const productIds = new Set([...oldQtyByProduct.keys(), ...newQtyByProduct.keys()]);
+  const productIds = isPreorder
+    ? new Set<number>()
+    : new Set([...oldQtyByProduct.keys(), ...newQtyByProduct.keys()]);
 
   for (const productId of productIds) {
     const oldQty = oldQtyByProduct.get(productId) ?? 0;
@@ -733,6 +887,7 @@ async function editOrderInTransaction(
       lat: data.lat,
       lon: data.lon,
       approxLocation: data.approxLocation ?? false,
+      ...(isPreorder && data.preorderDate ? { preorderDate: data.preorderDate } : {}),
       items: { create: data.items },
     },
     include: { items: { include: { product: true } } },
@@ -742,7 +897,7 @@ async function editOrderInTransaction(
 // Хозяйка меняет уже оформленный заказ со своего экрана.
 app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
   const id = Number(req.params.id);
-  const { name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
+  const { name, address, phone, comment, lat, lon, approxLocation, items, preorderDate } = req.body as {
     name: string;
     address: string;
     phone: string;
@@ -751,8 +906,10 @@ app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate?: string | null;
   };
   try {
+    const checkedPreorderDate = preorderDate ? validatePreorderDate(preorderDate, 1) : null;
     const order = await prisma.$transaction(
       (tx) =>
         editOrderInTransaction(tx, id, req.courierId!, {
@@ -764,6 +921,7 @@ app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
           lon,
           approxLocation,
           items,
+          preorderDate: checkedPreorderDate,
         }),
       { timeout: 15000 }
     );
@@ -778,7 +936,7 @@ app.post("/api/orders/:id/edit", requireOwner, async (req, res) => {
 // Покупатель меняет свой заказ.
 app.post("/api/orders/:id/edit-by-customer", resolveCourierBySlug, async (req, res) => {
   const id = Number(req.params.id);
-  const { maxUserId, name, address, phone, comment, lat, lon, approxLocation, items } = req.body as {
+  const { maxUserId, name, address, phone, comment, lat, lon, approxLocation, items, preorderDate } = req.body as {
     maxUserId: string;
     name: string;
     address: string;
@@ -788,15 +946,27 @@ app.post("/api/orders/:id/edit-by-customer", resolveCourierBySlug, async (req, r
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate?: string | null;
   };
   try {
+    const checkedPreorderDate = preorderDate ? validatePreorderDate(preorderDate, PREORDER_MIN_DAYS) : null;
     const order = await prisma.$transaction(
       (tx) =>
         editOrderInTransaction(
           tx,
           id,
           req.courierId!,
-          { name, address, phone, comment: comment?.trim() || null, lat, lon, approxLocation, items },
+          {
+            name,
+            address,
+            phone,
+            comment: comment?.trim() || null,
+            lat,
+            lon,
+            approxLocation,
+            items,
+            preorderDate: checkedPreorderDate,
+          },
           maxUserId
         ),
       { timeout: 15000 }

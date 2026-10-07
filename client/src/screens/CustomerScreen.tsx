@@ -13,6 +13,12 @@ import { OrderEditForm } from "../components/OrderEditForm";
 import { geocodeAddress } from "../lib/yandexMaps";
 import { splitAddress, joinAddress } from "../lib/address";
 import { formatOrderItems, formatOrderDate } from "../lib/orderFormat";
+import {
+  chitaDatePlusDays,
+  formatPreorderDate,
+  PREORDER_MAX_QTY,
+  PREORDER_MIN_DAYS,
+} from "../lib/preorder";
 import { Screen, Card, Field, Input, Textarea, Button, Muted, ErrorBanner, Modal } from "../components/ui";
 
 type Props = { courierSlug: string; maxUserId: string };
@@ -39,6 +45,15 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [orderHistory, setOrderHistory] = useState<Order[]>([]);
   const [cancelling, setCancelling] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  // Предзаказ на будущую дату — без учёта остатков. Форму предзаказа можно
+  // открыть и при уже оформленном текущем заказе (showPreorderForm).
+  const [isPreorder, setIsPreorder] = useState(false);
+  const [preorderDate, setPreorderDate] = useState("");
+  const [showPreorderForm, setShowPreorderForm] = useState(false);
+  const [preorderNotice, setPreorderNotice] = useState<string | null>(null);
+  const [editingPreorder, setEditingPreorder] = useState<Order | null>(null);
+  const [confirmCancelPreorderId, setConfirmCancelPreorderId] = useState<number | null>(null);
+  const minPreorderDate = chitaDatePlusDays(PREORDER_MIN_DAYS);
 
   // Подставляем данные покупателя, если он уже когда-то заказывал именно у
   // этого курьера: сначала пробуем сервер (главный источник), потом
@@ -139,10 +154,17 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   }, [activeOrder]);
 
   const totalItems = Object.values(quantities).filter((q) => q > 0).length;
+  const hasCurrentOrder = !!activeOrder && activeOrder.status !== "PICKED_UP";
+  // При текущем заказе форма открывается только для предзаказа.
+  const preorderMode = isPreorder || hasCurrentOrder;
 
   async function handleSubmit() {
     if (!name || !settlement.trim() || !street.trim() || !phone || totalItems === 0) {
       setError("Заполни имя, населённый пункт, улицу с домом, телефон и выбери хотя бы один товар");
+      return;
+    }
+    if (preorderMode && (!preorderDate || preorderDate < minPreorderDate)) {
+      setError(`Выбери дату предзаказа — не раньше ${formatPreorderDate(minPreorderDate)}`);
       return;
     }
     setSubmitting(true);
@@ -172,10 +194,17 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
             productId: Number(productId),
             quantity,
           })),
+        preorderDate: preorderMode ? preorderDate : null,
       });
-      setActiveOrder(order);
+      if (preorderMode) {
+        setPreorderNotice(`Предзаказ на ${formatPreorderDate(preorderDate)} оформлен`);
+        setIsPreorder(false);
+        setPreorderDate("");
+      } else {
+        setActiveOrder(order);
+        setEtaMinutes(null);
+      }
       setOrderHistory((prev) => [order, ...prev]);
-      setEtaMinutes(null);
       setQuantities({});
       setComment("");
       saveCustomerToDeviceStorage({ name, address, phone });
@@ -208,6 +237,175 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
     }
   }
 
+  async function handleCancelPreorder(orderId: number) {
+    try {
+      const updated = await api.cancelOrderByCustomer(courierSlug, orderId, maxUserId);
+      setOrderHistory((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не получилось отменить предзаказ");
+    } finally {
+      setConfirmCancelPreorderId(null);
+    }
+  }
+
+  async function handlePreorderEditSave(data: {
+    name: string;
+    address: string;
+    phone: string;
+    comment: string | null;
+    lat: number;
+    lon: number;
+    approxLocation: boolean;
+    items: { productId: number; quantity: number }[];
+    preorderDate: string | null;
+  }) {
+    if (!editingPreorder) return;
+    const updated = await api.editOrderByCustomer(courierSlug, editingPreorder.id, maxUserId, data);
+    setOrderHistory((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+    setEditingPreorder(null);
+  }
+
+  const orderForm = (
+    <Card title={hasCurrentOrder ? "Предзаказ на другую дату" : undefined}>
+      {preorderNotice && (
+        <p style={{ margin: "0 0 12px", color: "#166534", fontWeight: 500 }}>{preorderNotice}</p>
+      )}
+      <Field label="Имя">
+        <Input value={name} onChange={(e) => setName(e.target.value)} />
+      </Field>
+      <Field label="Населённый пункт (город/село)">
+        <Input
+          value={settlement}
+          onChange={(e) => setSettlement(e.target.value)}
+          placeholder="Например: Агинское"
+        />
+      </Field>
+      <Field label="Улица и дом">
+        <AddressInput
+          value={street}
+          onChange={setStreet}
+          placeholder="Например: ул. Ленина, 2"
+          context={settlement}
+        />
+      </Field>
+      <Field label="Телефон">
+        <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+      </Field>
+      <Field label="Комментарий к заказу (необязательно)">
+        <Textarea
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          placeholder="Например: домофон не работает, звоните по приезду"
+        />
+      </Field>
+
+      {!hasCurrentOrder && (
+        <div className="row" style={{ marginBottom: 12 }}>
+          <Button
+            variant={isPreorder ? "secondary" : "primary"}
+            onClick={() => {
+              // В предзаказе можно было набрать больше, чем есть в остатке.
+              if (isPreorder) setQuantities({});
+              setIsPreorder(false);
+            }}
+            style={{ flex: 1 }}
+          >
+            Заказ сейчас
+          </Button>
+          <Button
+            variant={isPreorder ? "primary" : "secondary"}
+            onClick={() => setIsPreorder(true)}
+            style={{ flex: 1 }}
+          >
+            Предзаказ на дату
+          </Button>
+        </div>
+      )}
+      {preorderMode && (
+        <>
+          <Field label="На какую дату">
+            <Input
+              type="date"
+              min={minPreorderDate}
+              value={preorderDate}
+              onChange={(e) => setPreorderDate(e.target.value)}
+            />
+          </Field>
+          <Muted>
+            Предзаказ можно сделать не раньше чем через {PREORDER_MIN_DAYS} дней. Товар
+            приготовят под заказ, даже если сейчас его нет в наличии.
+          </Muted>
+        </>
+      )}
+
+      {products.length === 0 ? (
+        <Muted>Пока нет доступных товаров</Muted>
+      ) : (
+        products.map((product) => (
+          <div key={product.id} className="row" style={{ marginBottom: 12 }}>
+            {product.imageUrl ? (
+              <img
+                src={product.imageUrl}
+                alt=""
+                onClick={() => setZoomedImage(product.imageUrl)}
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 8,
+                  objectFit: "cover",
+                  flex: "0 0 auto",
+                  cursor: "pointer",
+                }}
+              />
+            ) : (
+              <div style={{ width: 48, height: 48, borderRadius: 8, background: "var(--border)", flex: "0 0 auto" }} />
+            )}
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 500, marginBottom: 4 }}>{product.name}</div>
+              {product.availableQty === 0 && !preorderMode ? (
+                <Muted>Нет в наличии</Muted>
+              ) : (
+                <QuantityPicker
+                  value={quantities[product.id] ?? 0}
+                  max={preorderMode ? PREORDER_MAX_QTY : product.availableQty}
+                  onChange={(value) =>
+                    setQuantities((prev) => ({ ...prev, [product.id]: value }))
+                  }
+                />
+              )}
+            </div>
+          </div>
+        ))
+      )}
+
+      {courierInfo && (
+        <Muted>
+          Доставка:{" "}
+          {courierInfo.deliveryFee === 0
+            ? "бесплатно"
+            : `${courierInfo.deliveryFee} ₽`}
+        </Muted>
+      )}
+
+      <Button
+        onClick={handleSubmit}
+        disabled={submitting}
+        style={{ width: "100%", marginTop: 8 }}
+      >
+        {submitting ? "Оформляем…" : preorderMode ? "Оформить предзаказ" : "Заказать"}
+      </Button>
+      {hasCurrentOrder && (
+        <Button
+          variant="secondary"
+          onClick={() => setShowPreorderForm(false)}
+          style={{ width: "100%", marginTop: 8 }}
+        >
+          Закрыть
+        </Button>
+      )}
+    </Card>
+  );
+
   async function handleEditSave(data: {
     name: string;
     address: string;
@@ -230,6 +428,16 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
       {storeDisabled ? (
         <Card>
           <Muted>Магазин временно недоступен. Попробуйте зайти позже.</Muted>
+        </Card>
+      ) : editingPreorder ? (
+        <Card title="Изменить предзаказ">
+          <OrderEditForm
+            order={editingPreorder}
+            products={products}
+            onSave={handlePreorderEditSave}
+            onCancel={() => setEditingPreorder(null)}
+            minPreorderDate={minPreorderDate}
+          />
         </Card>
       ) : activeOrder && activeOrder.status !== "PICKED_UP" && editing ? (
         <Card title="Изменить заказ">
@@ -317,96 +525,24 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
                 </Button>
               </>
             ))}
+          {!showPreorderForm && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setPreorderNotice(null);
+                setShowPreorderForm(true);
+              }}
+              style={{ width: "100%", marginTop: 8 }}
+            >
+              Сделать предзаказ на другую дату
+            </Button>
+          )}
         </Card>
       ) : (
-        <Card>
-          <Field label="Имя">
-            <Input value={name} onChange={(e) => setName(e.target.value)} />
-          </Field>
-          <Field label="Населённый пункт (город/село)">
-            <Input
-              value={settlement}
-              onChange={(e) => setSettlement(e.target.value)}
-              placeholder="Например: Агинское"
-            />
-          </Field>
-          <Field label="Улица и дом">
-            <AddressInput
-              value={street}
-              onChange={setStreet}
-              placeholder="Например: ул. Ленина, 2"
-              context={settlement}
-            />
-          </Field>
-          <Field label="Телефон">
-            <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
-          </Field>
-          <Field label="Комментарий к заказу (необязательно)">
-            <Textarea
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              placeholder="Например: домофон не работает, звоните по приезду"
-            />
-          </Field>
-
-          {products.length === 0 ? (
-            <Muted>Пока нет доступных товаров</Muted>
-          ) : (
-            products.map((product) => (
-              <div key={product.id} className="row" style={{ marginBottom: 12 }}>
-                {product.imageUrl ? (
-                  <img
-                    src={product.imageUrl}
-                    alt=""
-                    onClick={() => setZoomedImage(product.imageUrl)}
-                    style={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: 8,
-                      objectFit: "cover",
-                      flex: "0 0 auto",
-                      cursor: "pointer",
-                    }}
-                  />
-                ) : (
-                  <div style={{ width: 48, height: 48, borderRadius: 8, background: "var(--border)", flex: "0 0 auto" }} />
-                )}
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 4 }}>{product.name}</div>
-                  {product.availableQty === 0 ? (
-                    <Muted>Нет в наличии</Muted>
-                  ) : (
-                    <QuantityPicker
-                      value={quantities[product.id] ?? 0}
-                      max={product.availableQty}
-                      onChange={(value) =>
-                        setQuantities((prev) => ({ ...prev, [product.id]: value }))
-                      }
-                    />
-                  )}
-                </div>
-              </div>
-            ))
-          )}
-
-          {courierInfo && (
-            <Muted>
-              Доставка:{" "}
-              {courierInfo.deliveryFee === 0
-                ? "бесплатно"
-                : `${courierInfo.deliveryFee} ₽`}
-            </Muted>
-          )}
-
-          <Button
-            onClick={handleSubmit}
-            disabled={submitting}
-            style={{ width: "100%", marginTop: 8 }}
-          >
-            {submitting ? "Оформляем…" : "Заказать"}
-          </Button>
-        </Card>
+        orderForm
       )}
+
+      {!storeDisabled && !editingPreorder && !editing && hasCurrentOrder && showPreorderForm && orderForm}
 
       {!storeDisabled && orderHistory.length > 0 && (
         <Card title="Мои заказы">
@@ -414,7 +550,9 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
             const items = formatOrderItems(order.items);
             const date = formatOrderDate(order.createdAt);
             const statusLabel =
-              order.status === "NEW"
+              order.status === "PREORDER"
+                ? `предзаказ на ${formatPreorderDate(order.preorderDate ?? "")}`
+                : order.status === "NEW"
                 ? "оформлен"
                 : order.status === "ON_THE_WAY"
                 ? "курьер в пути"
@@ -429,6 +567,41 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
                 <div className="list-item-subtitle">
                   {items} — {statusLabel}
                 </div>
+                {order.status === "PREORDER" &&
+                  (confirmCancelPreorderId === order.id ? (
+                    <div className="row" style={{ marginTop: 8 }}>
+                      <Button
+                        variant="secondary"
+                        onClick={() => setConfirmCancelPreorderId(null)}
+                        style={{ flex: 1 }}
+                      >
+                        Не отменять
+                      </Button>
+                      <Button onClick={() => handleCancelPreorder(order.id)} style={{ flex: 1 }}>
+                        Да, отменить
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="row" style={{ marginTop: 8 }}>
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setEditingPreorder(order);
+                          window.scrollTo({ top: 0, behavior: "smooth" });
+                        }}
+                        style={{ flex: 1 }}
+                      >
+                        Изменить
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() => setConfirmCancelPreorderId(order.id)}
+                        style={{ flex: 1 }}
+                      >
+                        Отменить
+                      </Button>
+                    </div>
+                  ))}
               </div>
             );
           })}

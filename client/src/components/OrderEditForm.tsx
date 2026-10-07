@@ -3,6 +3,7 @@ import { type Order, type Product } from "../lib/api";
 import { splitAddress, joinAddress } from "../lib/address";
 import { geocodeAddress } from "../lib/yandexMaps";
 import { QuantityPicker } from "./QuantityPicker";
+import { PREORDER_MAX_QTY } from "../lib/preorder";
 import { AddressInput } from "./AddressInput";
 import { Field, Input, Textarea, Button, Muted } from "./ui";
 
@@ -15,6 +16,7 @@ type SaveData = {
   lon: number;
   approxLocation: boolean;
   items: { productId: number; quantity: number }[];
+  preorderDate: string | null;
 };
 
 type Props = {
@@ -27,12 +29,25 @@ type Props = {
   // вручную (тогда передаётся, например, "Оформить заказ") — order в этом
   // случае просто "пустой" (пустые поля, order.items === []).
   submitLabel?: string;
+  // Можно ли переключить заказ в предзаказ (только при ручном оформлении
+  // хозяйкой). У уже оформленного предзаказа дата меняется всегда.
+  canTogglePreorder?: boolean;
+  // Самая ранняя допустимая дата предзаказа ("YYYY-MM-DD").
+  minPreorderDate?: string;
 };
 
 // Общая форма редактирования уже оформленного заказа — одна и та же что для
 // покупателя (свой заказ), что для хозяйки (любой заказ со своего экрана):
 // по итоговому решению обе стороны правят одинаковый набор полей.
-export function OrderEditForm({ order, products, onSave, onCancel, submitLabel = "Сохранить" }: Props) {
+export function OrderEditForm({
+  order,
+  products,
+  onSave,
+  onCancel,
+  submitLabel = "Сохранить",
+  canTogglePreorder = false,
+  minPreorderDate,
+}: Props) {
   const initialAddress = splitAddress(order.address);
   const [name, setName] = useState(order.name);
   const [settlement, setSettlement] = useState(initialAddress.settlement);
@@ -42,6 +57,9 @@ export function OrderEditForm({ order, products, onSave, onCancel, submitLabel =
   const [quantities, setQuantities] = useState<Record<number, number>>(
     Object.fromEntries(order.items.map((i) => [i.productId, i.quantity]))
   );
+  // Предзаказ: остаток не списывается, поэтому количество не ограничено им.
+  const [isPreorder, setIsPreorder] = useState(order.status === "PREORDER");
+  const [preorderDate, setPreorderDate] = useState(order.preorderDate ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,6 +78,10 @@ export function OrderEditForm({ order, products, onSave, onCancel, submitLabel =
     const totalItems = Object.values(quantities).filter((q) => q > 0).length;
     if (!name || !settlement.trim() || !street.trim() || !phone || totalItems === 0) {
       setError("Заполни имя, населённый пункт, улицу с домом, телефон и выбери хотя бы один товар");
+      return;
+    }
+    if (isPreorder && (!preorderDate || (minPreorderDate && preorderDate < minPreorderDate))) {
+      setError("Выбери дату предзаказа");
       return;
     }
     setSaving(true);
@@ -83,6 +105,7 @@ export function OrderEditForm({ order, products, onSave, onCancel, submitLabel =
         items: Object.entries(quantities)
           .filter(([, qty]) => qty > 0)
           .map(([productId, quantity]) => ({ productId: Number(productId), quantity })),
+        preorderDate: isPreorder ? preorderDate : null,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не получилось сохранить изменения");
@@ -122,9 +145,30 @@ export function OrderEditForm({ order, products, onSave, onCancel, submitLabel =
         />
       </Field>
 
+      {canTogglePreorder && (
+        <label className="row" style={{ marginBottom: 12 }}>
+          <input
+            type="checkbox"
+            checked={isPreorder}
+            onChange={(e) => setIsPreorder(e.target.checked)}
+          />
+          <span>Предзаказ на дату (без учёта остатков)</span>
+        </label>
+      )}
+      {isPreorder && (
+        <Field label="Дата предзаказа">
+          <Input
+            type="date"
+            min={minPreorderDate}
+            value={preorderDate}
+            onChange={(e) => setPreorderDate(e.target.value)}
+          />
+        </Field>
+      )}
+
       {editableProducts.map((product) => {
         const reserved = reservedByThisOrder.get(product.id) ?? 0;
-        const max = product.availableQty + reserved;
+        const max = isPreorder ? PREORDER_MAX_QTY : product.availableQty + reserved;
         return (
           <div key={product.id} className="row" style={{ marginBottom: 12 }}>
             <div style={{ flex: 1 }}>{product.name}</div>

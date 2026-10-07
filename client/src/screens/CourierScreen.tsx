@@ -10,12 +10,15 @@ import { SUPPORT_MAX_LINK } from "../lib/config";
 import { OrderEditForm } from "../components/OrderEditForm";
 import { formatOrderItems, formatOrderDate } from "../lib/orderFormat";
 import { telHref } from "../lib/phone";
+import { chitaDatePlusDays, formatPreorderDate, PREORDER_WEEK_DAYS } from "../lib/preorder";
 import { Screen, Card, Input, Button, Muted, Modal, ErrorBanner } from "../components/ui";
 
 export function CourierScreen() {
   const [me, setMe] = useState<Me | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [preorders, setPreorders] = useState<Order[]>([]);
+  const [activatingWeek, setActivatingWeek] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
   const [editingOrder, setEditingOrder] = useState(false);
@@ -66,6 +69,7 @@ export function CourierScreen() {
   }
   function reloadOrders() {
     api.getOrders().then(setOrders).catch(() => {});
+    api.getPreorders().then(setPreorders).catch(() => {});
   }
 
   useEffect(() => {
@@ -203,6 +207,41 @@ export function CourierScreen() {
     }
   }
 
+  // Если при переводе предзаказа в остатке чего-то не хватило — заказ всё
+  // равно переведён, а хозяйке показываем, сколько чего докупить/доготовить.
+  function showShortages(shortages: { name: string; missing: number }[]) {
+    if (shortages.length === 0) return;
+    const totals = new Map<string, number>();
+    for (const s of shortages) totals.set(s.name, (totals.get(s.name) ?? 0) + s.missing);
+    setActionError(
+      `Переведено, но в остатках не хватило: ${[...totals.entries()]
+        .map(([name, missing]) => `${name} — ${missing} шт.`)
+        .join(", ")}. Остаток этих товаров теперь 0.`
+    );
+  }
+
+  async function handleActivate(orderId: number) {
+    try {
+      const { shortages } = await api.activatePreorder(orderId);
+      setSelectedOrder(null);
+      showShortages(shortages);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Не удалось перевести предзаказ");
+    }
+  }
+
+  async function handleActivateWeek() {
+    setActivatingWeek(true);
+    try {
+      const { shortages } = await api.activatePreordersWeek();
+      showShortages(shortages);
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Не удалось перевести предзаказы");
+    } finally {
+      setActivatingWeek(false);
+    }
+  }
+
   async function handleCollected(orderId: number, collected: boolean) {
     try {
       await api.setCollected(orderId, collected);
@@ -239,6 +278,7 @@ export function CourierScreen() {
     lon: number;
     approxLocation: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate: string | null;
   }) {
     if (!selectedOrder) return;
     const updated = await api.editOrder(selectedOrder.id, data);
@@ -255,6 +295,7 @@ export function CourierScreen() {
     lon: number;
     approxLocation: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate: string | null;
   }) {
     await api.createManualOrder(data);
     setCreatingManualOrder(false);
@@ -276,6 +317,7 @@ export function CourierScreen() {
     lon: 0,
     approxLocation: false,
     collected: false,
+    preorderDate: null,
     createdAt: new Date().toISOString(),
     items: [],
   };
@@ -315,6 +357,17 @@ export function CourierScreen() {
     return { totals, total };
   }
   const toCollect = sumItems(orders.filter((o) => !o.collected));
+
+  // Предзаказы по датам (сервер уже отдаёт их отсортированными). Даты на
+  // ближайшие PREORDER_WEEK_DAYS дней выделяются жирным — по ним пора
+  // созваниваться с покупателями и переводить заказы в активные.
+  const weekLimit = chitaDatePlusDays(PREORDER_WEEK_DAYS);
+  const preordersByDate = new Map<string, Order[]>();
+  for (const order of preorders) {
+    const date = order.preorderDate ?? "";
+    preordersByDate.set(date, [...(preordersByDate.get(date) ?? []), order]);
+  }
+  const hasPreordersThisWeek = preorders.some((o) => (o.preorderDate ?? "") <= weekLimit);
   const collected = sumItems(orders.filter((o) => o.collected));
 
   return (
@@ -488,6 +541,8 @@ export function CourierScreen() {
             onSave={handleCreateManualOrder}
             onCancel={() => setCreatingManualOrder(false)}
             submitLabel="Оформить заказ"
+            canTogglePreorder
+            minPreorderDate={chitaDatePlusDays(1)}
           />
         ) : (
           <>
@@ -574,6 +629,64 @@ export function CourierScreen() {
           })
         )}
       </Card>
+
+      {preorders.length > 0 && (
+        <Card title="Предварительные заказы">
+          <Muted>
+            Жирным — заказы на ближайшие {PREORDER_WEEK_DAYS} дней: созвонись с
+            покупателем, при необходимости измени заказ и переведи его в
+            активные — тогда товар спишется из остатков.
+          </Muted>
+          {hasPreordersThisWeek && (
+            <Button
+              disabled={activatingWeek}
+              onClick={handleActivateWeek}
+              style={{ width: "100%", margin: "8px 0" }}
+            >
+              {activatingWeek
+                ? "Переводим…"
+                : `Перевести все на ближайшие ${PREORDER_WEEK_DAYS} дней`}
+            </Button>
+          )}
+          {[...preordersByDate.entries()].map(([date, dayOrders]) => {
+            const thisWeek = date <= weekLimit;
+            const dayTotals = sumItems(dayOrders);
+            return (
+              <div key={date} style={{ marginTop: 12 }}>
+                <div style={{ fontWeight: thisWeek ? 700 : 500 }}>
+                  {formatPreorderDate(date)}
+                  {thisWeek ? " — на этой неделе" : ""}
+                </div>
+                <div className="muted" style={{ fontSize: 14 }}>
+                  Всего:{" "}
+                  {[...dayTotals.totals.entries()]
+                    .map(([name, qty]) => `${name} × ${qty}`)
+                    .join(", ")}
+                </div>
+                {dayOrders.map((order) => (
+                  <div key={order.id} className="list-item" onClick={() => setSelectedOrder(order)}>
+                    <div className="list-item-title" style={{ fontWeight: thisWeek ? 700 : undefined }}>
+                      {order.name} — {order.address}
+                    </div>
+                    <div className="list-item-subtitle">{formatOrderItems(order.items)}</div>
+                    <Button
+                      variant={thisWeek ? "primary" : "secondary"}
+                      onClick={(e) => {
+                        // Чтобы нажатие на кнопку не открывало детали заказа.
+                        e.stopPropagation();
+                        handleActivate(order.id);
+                      }}
+                      style={{ width: "100%", marginTop: 8 }}
+                    >
+                      Перевести в активные
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </Card>
+      )}
 
       <Card title="История заказов">
         <div className="row" style={{ marginBottom: 8 }}>
@@ -663,12 +776,18 @@ export function CourierScreen() {
                 products={products}
                 onSave={handleEditOrder}
                 onCancel={() => setEditingOrder(false)}
+                minPreorderDate={chitaDatePlusDays(1)}
               />
             </>
           ) : (
             <>
               <h2 style={{ margin: "0 0 4px" }}>{selectedOrder.name}</h2>
               <Muted>{selectedOrder.address}</Muted>
+              {selectedOrder.status === "PREORDER" && selectedOrder.preorderDate && (
+                <p style={{ margin: "12px 0 0", fontWeight: 600 }}>
+                  Предзаказ на {formatPreorderDate(selectedOrder.preorderDate)}
+                </p>
+              )}
               <p style={{ margin: "12px 0" }}>
                 Телефон: <a href={telHref(selectedOrder.phone)}>{selectedOrder.phone}</a>
               </p>
@@ -694,18 +813,19 @@ export function CourierScreen() {
                   display: "block",
                   textAlign: "center",
                   textDecoration: "none",
-                  marginBottom:
-                    selectedOrder.status === "NEW" || selectedOrder.status === "ON_THE_WAY"
-                      ? 8
-                      : 0,
+                  marginBottom: isOpenOrder(selectedOrder) ? 8 : 0,
                 }}
               >
                 Маршрут в 2ГИС
               </a>
-              {(selectedOrder.status === "NEW" || selectedOrder.status === "ON_THE_WAY") && (
+              {isOpenOrder(selectedOrder) && (
                 confirmCancelId === selectedOrder.id ? (
                   <>
-                    <Muted>Точно отменить? Товар вернётся в остаток.</Muted>
+                    <Muted>
+                      {selectedOrder.status === "PREORDER"
+                        ? "Точно отменить предзаказ?"
+                        : "Точно отменить? Товар вернётся в остаток."}
+                    </Muted>
                     <div className="row" style={{ marginTop: 8 }}>
                       <Button
                         variant="secondary"
@@ -721,7 +841,14 @@ export function CourierScreen() {
                   </>
                 ) : (
                   <>
-                    {selectedOrder.status === "NEW" ? (
+                    {selectedOrder.status === "PREORDER" ? (
+                      <Button
+                        onClick={() => handleActivate(selectedOrder.id)}
+                        style={{ width: "100%", marginBottom: 8 }}
+                      >
+                        Перевести в активные
+                      </Button>
+                    ) : selectedOrder.status === "NEW" ? (
                       <Button
                         onClick={() => handleAccept(selectedOrder.id)}
                         style={{ width: "100%", marginBottom: 8 }}
@@ -769,6 +896,12 @@ export function CourierScreen() {
       )}
     </Screen>
   );
+}
+
+// Заказ ещё можно менять/отменять/двигать дальше по статусам (не выдан, не
+// забран, не отменён).
+function isOpenOrder(order: Order) {
+  return order.status === "NEW" || order.status === "ON_THE_WAY" || order.status === "PREORDER";
 }
 
 // Список «товар — сколько штук» и строка «Итого» под ним.

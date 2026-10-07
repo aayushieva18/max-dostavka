@@ -23,7 +23,7 @@ export type OrderItem = {
   product: Product;
 };
 
-export type OrderStatus = "NEW" | "ON_THE_WAY" | "DELIVERED" | "PICKED_UP" | "CANCELLED";
+export type OrderStatus = "NEW" | "ON_THE_WAY" | "DELIVERED" | "PICKED_UP" | "CANCELLED" | "PREORDER";
 
 export type Order = {
   id: number;
@@ -45,6 +45,9 @@ export type Order = {
   approxLocation: boolean;
   // Хозяйка отметила, что товар по заказу уже собран (статус не меняет).
   collected: boolean;
+  // Дата предзаказа ("YYYY-MM-DD") — есть только у предзаказов (и остаётся
+  // после их перевода в активные), у обычных заказов null.
+  preorderDate: string | null;
   createdAt: string;
   items: OrderItem[];
 };
@@ -173,6 +176,7 @@ export const api = {
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate?: string | null;
   }) =>
     request<Order>("/api/orders", {
       method: "POST",
@@ -190,6 +194,7 @@ export const api = {
     lon: number;
     approxLocation?: boolean;
     items: { productId: number; quantity: number }[];
+    preorderDate?: string | null;
   }) =>
     ownerRequest<Order>("/api/orders/manual", {
       method: "POST",
@@ -207,6 +212,7 @@ export const api = {
       lon: number;
       approxLocation?: boolean;
       items: { productId: number; quantity: number }[];
+      preorderDate?: string | null;
     }
   ) =>
     ownerRequest<Order>(`/api/orders/${orderId}/edit`, {
@@ -227,11 +233,29 @@ export const api = {
       lon: number;
       approxLocation?: boolean;
       items: { productId: number; quantity: number }[];
+      preorderDate?: string | null;
     }
   ) =>
     request<Order>(
       `/api/orders/${orderId}/edit-by-customer?courier=${encodeURIComponent(courierSlug)}`,
       { method: "POST", body: JSON.stringify({ ...data, maxUserId }) }
+    ),
+
+  // Предзаказы хозяйки, по дате доставки.
+  getPreorders: () => ownerRequest<Order[]>("/api/orders/preorders"),
+
+  // Перевод предзаказа (одного или всех на ближайшие 7 дней) в активные —
+  // со списанием остатка; shortages — чего в остатке не хватило.
+  activatePreorder: (orderId: number) =>
+    ownerRequest<{ shortages: { name: string; missing: number }[] }>(
+      `/api/orders/${orderId}/activate`,
+      { method: "POST" }
+    ),
+
+  activatePreordersWeek: () =>
+    ownerRequest<{ shortages: { name: string; missing: number }[]; count: number }>(
+      "/api/orders/activate-week",
+      { method: "POST" }
     ),
 
   acceptOrder: (orderId: number) =>
