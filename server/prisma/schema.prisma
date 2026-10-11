@@ -40,6 +40,7 @@ model Courier {
   products   Product[]
   customers  Customer[]
   orders     Order[]
+  botMessages BotMessage[]
 }
 
 // Товар и остаток, доступный к заказу прямо сейчас.
@@ -140,4 +141,19 @@ model OrderItem {
   product   Product @relation(fields: [productId], references: [id])
   productId Int
   quantity  Int
+}
+
+// Сообщение, которое покупатель написал прямо в чат бота MAX (вместо того
+// чтобы оформить заказ через кнопку). Бот сразу отвечает инструкцией, а само
+// сообщение показывается хозяйке на её экране, чтобы заказ не потерялся.
+model BotMessage {
+  id        Int      @id @default(autoincrement())
+  courier   Courier  @relation(fields: [courierId], references: [id])
+  courierId Int
+  maxUserId String
+  name      String
+  text      String
+  // Хозяйка нажала «Разобрала» — сообщение больше не показывается.
+  handled   Boolean  @default(false)
+  createdAt DateTime @default(now())
 }

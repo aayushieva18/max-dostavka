@@ -52,6 +52,17 @@ export type Order = {
   items: OrderItem[];
 };
 
+// Сообщение, которое покупатель написал прямо в чат бота MAX вместо заказа
+// через кнопку. phone — если этот человек уже заказывал раньше.
+export type BotMessage = {
+  id: number;
+  maxUserId: string;
+  name: string;
+  text: string;
+  phone: string | null;
+  createdAt: string;
+};
+
 // singleItemFee — отдельная цена доставки, если во всём заказе 1 штука
 // (null — отдельной цены нет).
 export type Me = { id: number; slug: string; name: string; deliveryFee: number; singleItemFee: number | null };
@@ -259,6 +270,11 @@ export const api = {
       "/api/orders/activate-week",
       { method: "POST" }
     ),
+
+  getBotMessages: () => ownerRequest<BotMessage[]>("/api/bot-messages"),
+
+  markBotMessageHandled: (id: number) =>
+    ownerRequest<{ ok: boolean }>(`/api/bot-messages/${id}/handled`, { method: "POST" }),
 
   acceptOrder: (orderId: number) =>
     ownerRequest<Order>(`/api/orders/${orderId}/accept`, { method: "POST" }),

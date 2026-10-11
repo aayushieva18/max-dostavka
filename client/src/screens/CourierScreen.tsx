@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, type Me, type Order, type Product } from "../lib/api";
+import { api, type BotMessage, type Me, type Order, type Product } from "../lib/api";
 import { socket, connectAsOwner } from "../lib/socket";
 import { getOwnerToken } from "../lib/ownerAuth";
 import { MapView } from "../components/MapView";
@@ -18,6 +18,7 @@ export function CourierScreen() {
   const [products, setProducts] = useState<Product[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [preorders, setPreorders] = useState<Order[]>([]);
+  const [botMessages, setBotMessages] = useState<BotMessage[]>([]);
   const [activatingWeek, setActivatingWeek] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
@@ -85,17 +86,23 @@ export function CourierScreen() {
     api.getOrders().then(setOrders).catch(() => {});
     api.getPreorders().then(setPreorders).catch(() => {});
   }
+  function reloadBotMessages() {
+    api.getBotMessages().then(setBotMessages).catch(() => {});
+  }
 
   useEffect(() => {
     if (!me) return;
     reloadProducts(me.slug);
     reloadOrders();
+    reloadBotMessages();
     const onProducts = () => reloadProducts(me.slug);
     socket.on("products:updated", onProducts);
     socket.on("orders:updated", reloadOrders);
+    socket.on("bot-messages:updated", reloadBotMessages);
     return () => {
       socket.off("products:updated", onProducts);
       socket.off("orders:updated", reloadOrders);
+      socket.off("bot-messages:updated", reloadBotMessages);
     };
   }, [me]);
 
@@ -567,6 +574,44 @@ export function CourierScreen() {
           </label>
         </div>
       </Card>
+
+      {botMessages.length > 0 && (
+        <Card title="Сообщения в бот">
+          <Muted>
+            Эти люди написали прямо в чат бота вместо заказа через кнопку.
+            Бот уже ответил им, как заказать, — но если это был заказ,
+            свяжись с ними или оформи заказ вручную ниже.
+          </Muted>
+          {botMessages.map((m) => (
+            <div key={m.id} className="list-item" style={{ cursor: "default" }}>
+              <div className="list-item-title">
+                {m.name} — {new Date(m.createdAt).toLocaleString("ru-RU", {
+                  day: "numeric",
+                  month: "short",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </div>
+              <div style={{ whiteSpace: "pre-wrap", margin: "4px 0" }}>{m.text}</div>
+              {m.phone && (
+                <div className="list-item-subtitle">
+                  Телефон: <a href={telHref(m.phone)}>{m.phone}</a>
+                </div>
+              )}
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  api.markBotMessageHandled(m.id).catch(() => {});
+                  setBotMessages((prev) => prev.filter((x) => x.id !== m.id));
+                }}
+                style={{ width: "100%", marginTop: 8 }}
+              >
+                Разобрала
+              </Button>
+            </div>
+          ))}
+        </Card>
+      )}
 
       <Card title="Заказ по телефону">
         {creatingManualOrder ? (

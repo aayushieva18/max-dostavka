@@ -3,6 +3,7 @@ import cors from "cors";
 import { createServer } from "http";
 import https from "https";
 import { readFileSync } from "fs";
+import { createHash } from "crypto";
 import { fileURLToPath } from "url";
 import path from "path";
 import { rootCertificates } from "tls";
@@ -39,25 +40,20 @@ const maxApiAgent = new https.Agent({ ca: [...rootCertificates, russianTrustedRo
 // просто тихо не отправляем (чтобы это не ломало саму отметку заказа).
 // Используем https.request (не fetch) — так можно указать свой доверенный
 // сертификат (maxApiAgent), у fetch() в Node такой возможности на запрос нет.
-function sendMaxMessage(maxUserId: string, text: string): Promise<void> {
+// Никогда не отклоняется: при ошибке сети возвращает status 0.
+function maxApiRequest(
+  method: string,
+  apiPath: string,
+  payload?: unknown
+): Promise<{ status: number; body: string }> {
   return new Promise((resolve) => {
-    const token = process.env.MAX_BOT_TOKEN;
-    if (!token) {
-      console.log("MAX Bot API: пропущено — MAX_BOT_TOKEN не задан");
-      resolve();
-      return;
-    }
-    if (!/^\d+$/.test(maxUserId)) {
-      console.log("MAX Bot API: пропущено — не настоящий id MAX", maxUserId);
-      resolve();
-      return;
-    }
-    const body = JSON.stringify({ text });
+    const token = process.env.MAX_BOT_TOKEN ?? "";
+    const body = payload === undefined ? "" : JSON.stringify(payload);
     const req = https.request(
       {
         hostname: "platform-api2.max.ru",
-        path: `/messages?user_id=${maxUserId}`,
-        method: "POST",
+        path: apiPath,
+        method,
         headers: {
           Authorization: token,
           "Content-Type": "application/json",
@@ -68,23 +64,38 @@ function sendMaxMessage(maxUserId: string, text: string): Promise<void> {
       (res) => {
         let responseBody = "";
         res.on("data", (chunk) => (responseBody += chunk));
-        res.on("end", () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            console.log("MAX Bot API: сообщение отправлено", maxUserId);
-          } else {
-            console.error("MAX Bot API: не удалось отправить сообщение", res.statusCode, responseBody);
-          }
-          resolve();
-        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: responseBody }));
       }
     );
     req.on("error", (e) => {
       console.error("MAX Bot API: ошибка запроса", e);
-      resolve();
+      resolve({ status: 0, body: "" });
     });
-    req.write(body);
+    if (body) req.write(body);
     req.end();
   });
+}
+
+// attachments — например, кнопки под сообщением (inline_keyboard).
+async function sendMaxMessage(maxUserId: string, text: string, attachments?: unknown[]): Promise<boolean> {
+  if (!process.env.MAX_BOT_TOKEN) {
+    console.log("MAX Bot API: пропущено — MAX_BOT_TOKEN не задан");
+    return false;
+  }
+  if (!/^\d+$/.test(maxUserId)) {
+    console.log("MAX Bot API: пропущено — не настоящий id MAX", maxUserId);
+    return false;
+  }
+  const { status, body } = await maxApiRequest("POST", `/messages?user_id=${maxUserId}`, {
+    text,
+    ...(attachments ? { attachments } : {}),
+  });
+  if (status >= 200 && status < 300) {
+    console.log("MAX Bot API: сообщение отправлено", maxUserId);
+    return true;
+  }
+  console.error("MAX Bot API: не удалось отправить сообщение", status, body);
+  return false;
 }
 
 const prisma = new PrismaClient();
@@ -1016,6 +1027,185 @@ app.post("/api/orders/:id/edit-by-customer", resolveCourierBySlug, async (req, r
   }
 });
 
+// --- Чат бота MAX --------------------------------------------------------
+// Поле для сообщения в чате бота убрать нельзя (это часть самого MAX), а
+// покупатели путают и пишут заказ сообщением. Поэтому: на «Начать» бот
+// присылает инструкцию с кнопкой, открывающей мини-приложение; на любое
+// сообщение — короткий ответ с той же кнопкой, а само сообщение сохраняется
+// и показывается хозяйке на её экране.
+//
+// Бот один (Арюны) — сообщения в нём относятся к её витрине. Если в «Начать»
+// пришёл payload со slug другого курьера (ссылка max.ru/бот?start=<slug>),
+// используем его.
+const BOT_DEFAULT_COURIER_SLUG = process.env.MAX_BOT_COURIER_SLUG ?? "aryuna";
+const BOT_USERNAME = process.env.MAX_BOT_USERNAME ?? "id800200803014_bot";
+
+// Секрет, по которому сервер узнаёт, что запрос к вебхуку пришёл именно от
+// MAX — выводится из токена бота, чтобы не заводить отдельную настройку.
+function webhookSecret(): string {
+  return createHash("sha256")
+    .update(`webhook:${process.env.MAX_BOT_TOKEN ?? ""}`)
+    .digest("hex")
+    .slice(0, 40);
+}
+
+function botInstruction(courierName: string): string {
+  return [
+    `Здравствуйте! Это бот «${courierName}».`,
+    "",
+    "Как сделать заказ:",
+    "1. Нажмите кнопку «Сделать заказ» под этим сообщением.",
+    "2. Заполните имя, адрес и телефон — в следующий раз они подставятся сами.",
+    "3. Выберите товары кнопками «+» и «−» и нажмите «Заказать».",
+    "",
+    "Как изменить или отменить заказ:",
+    "1. Снова нажмите «Сделать заказ» — откроется ваш текущий заказ.",
+    "2. Нажмите «Изменить заказ», поправьте товары, адрес или телефон и нажмите «Сохранить».",
+    "3. Если заказ больше не нужен — нажмите «Отменить заказ».",
+    "Изменить или отменить заказ можно, пока курьер его не выдал.",
+    "",
+    `Можно сделать предзаказ на дату — от ${PREORDER_MIN_DAYS} дней вперёд: в форме заказа выберите «Предзаказ на дату». Изменить или отменить предзаказ — в разделе «Мои заказы» внизу экрана.`,
+    "",
+    "Заказы, написанные сообщением в этот чат, не принимаются — только через кнопку «Сделать заказ».",
+  ].join("\n");
+}
+
+const BOT_REPLY_TO_MESSAGE =
+  "Заказы сообщением в этот чат не принимаются. Чтобы сделать, изменить или отменить заказ, нажмите кнопку «Сделать заказ» ниже. Ваше сообщение мы передали курьеру.";
+
+// Кнопка «Сделать заказ», открывающая мини-приложение нужного курьера.
+// Сначала пробуем специальную кнопку open_app; если MAX её не примет —
+// обычную ссылку на то же мини-приложение (тот же deep-link, что и везде).
+async function sendWithOrderButton(maxUserId: string, text: string, slug: string) {
+  const openApp = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: [[{ type: "open_app", text: "Сделать заказ", web_app: BOT_USERNAME, payload: slug }]],
+      },
+    },
+  ];
+  if (await sendMaxMessage(maxUserId, text, openApp)) return;
+  const link = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: [[{ type: "link", text: "Сделать заказ", url: `https://max.ru/${BOT_USERNAME}?startapp=${slug}` }]],
+      },
+    },
+  ];
+  await sendMaxMessage(maxUserId, text, link);
+}
+
+async function botCourier(slug?: string | null) {
+  if (slug) {
+    const courier = await prisma.courier.findUnique({ where: { slug } });
+    if (courier) return courier;
+  }
+  return prisma.courier.findUnique({ where: { slug: BOT_DEFAULT_COURIER_SLUG } });
+}
+
+type MaxUser = { user_id: number; first_name?: string; last_name?: string; name?: string; is_bot?: boolean };
+type MaxUpdate =
+  | { update_type: "bot_started"; user: MaxUser; payload?: string | null }
+  | {
+      update_type: "message_created";
+      message: {
+        sender?: MaxUser | null;
+        recipient?: { chat_type?: string };
+        body?: { text?: string | null };
+      };
+    }
+  | { update_type: string };
+
+async function handleBotUpdate(update: MaxUpdate) {
+  if (update.update_type === "bot_started" && "user" in update) {
+    const courier = await botCourier(update.payload);
+    if (!courier) return;
+    await sendWithOrderButton(String(update.user.user_id), botInstruction(courier.name), courier.slug);
+    return;
+  }
+  if (update.update_type === "message_created" && "message" in update) {
+    const sender = update.message.sender;
+    // Только личные сообщения живых людей (не групповые чаты и не боты,
+    // включая собственные ответы этого же бота).
+    if (!sender || sender.is_bot) return;
+    if (update.message.recipient?.chat_type && update.message.recipient.chat_type !== "dialog") return;
+    const text = update.message.body?.text?.trim();
+    const courier = await botCourier();
+    if (!courier) return;
+    const maxUserId = String(sender.user_id);
+    if (text) {
+      const name =
+        [sender.first_name, sender.last_name].filter(Boolean).join(" ") || sender.name || "Без имени";
+      await prisma.botMessage.create({
+        data: { courierId: courier.id, maxUserId, name, text: text.slice(0, 2000) },
+      });
+      io.to(courierRoom(courier.id)).emit("bot-messages:updated");
+    }
+    await sendWithOrderButton(maxUserId, BOT_REPLY_TO_MESSAGE, courier.slug);
+  }
+}
+
+app.post("/api/max-webhook", (req, res) => {
+  if (!process.env.MAX_BOT_TOKEN || req.header("X-Max-Bot-Api-Secret") !== webhookSecret()) {
+    res.status(403).end();
+    return;
+  }
+  // MAX ждёт ответ не дольше 30 секунд — отвечаем сразу, обрабатываем после.
+  res.status(200).end();
+  handleBotUpdate(req.body as MaxUpdate).catch((e) => console.error("Вебхук MAX: ошибка", e));
+});
+
+// Подписка бота на события (вебхук) — при каждом запуске сервера проверяем,
+// что она есть, и создаём, если нет (MAX сам снимает подписку, если сервер
+// долго не отвечал). Адрес сервера Render передаёт сам в RENDER_EXTERNAL_URL;
+// локально (без него) не подписываемся.
+async function ensureBotWebhook() {
+  const baseUrl = process.env.RENDER_EXTERNAL_URL;
+  if (!process.env.MAX_BOT_TOKEN || !baseUrl) {
+    console.log("Вебхук MAX: пропущено — нет MAX_BOT_TOKEN или RENDER_EXTERNAL_URL");
+    return;
+  }
+  const url = `${baseUrl.replace(/\/$/, "")}/api/max-webhook`;
+  const current = await maxApiRequest("GET", "/subscriptions");
+  if (current.status === 200 && current.body.includes(url)) {
+    console.log("Вебхук MAX: подписка уже есть", url);
+    return;
+  }
+  const created = await maxApiRequest("POST", "/subscriptions", {
+    url,
+    update_types: ["bot_started", "message_created"],
+    secret: webhookSecret(),
+  });
+  console.log("Вебхук MAX: подписка", url, created.status, created.body);
+}
+
+// Сообщения из чата бота — для экрана хозяйки (только не разобранные).
+app.get("/api/bot-messages", requireOwner, async (req, res) => {
+  const messages = await prisma.botMessage.findMany({
+    where: { courierId: req.courierId, handled: false },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+  });
+  // Если человек уже заказывал раньше — подставляем телефон, чтобы можно
+  // было сразу позвонить.
+  const customers = await prisma.customer.findMany({
+    where: { courierId: req.courierId, maxUserId: { in: [...new Set(messages.map((m) => m.maxUserId))] } },
+  });
+  const phoneByUser = new Map(customers.map((c) => [c.maxUserId, c.phone]));
+  res.json(messages.map((m) => ({ ...m, phone: phoneByUser.get(m.maxUserId) ?? null })));
+});
+
+app.post("/api/bot-messages/:id/handled", requireOwner, async (req, res) => {
+  await prisma.botMessage.updateMany({
+    where: { id: Number(req.params.id), courierId: req.courierId },
+    data: { handled: true },
+  });
+  io.to(courierRoom(req.courierId!)).emit("bot-messages:updated");
+  res.json({ ok: true });
+});
+
 // --- Живое положение курьера --------------------------------------------
 // Курьер шлёт своё положение через сокет; сервер рассылает его только
 // подключённым к НЕМУ ЖЕ покупателям (по комнатам socket.io, одна комната
@@ -1082,4 +1272,5 @@ app.use((err: unknown, _req: express.Request, res: express.Response, _next: expr
 const PORT = Number(process.env.PORT) || 3001;
 httpServer.listen(PORT, () => {
   console.log(`Сервер доставки запущен: http://localhost:${PORT}`);
+  ensureBotWebhook().catch((e) => console.error("Вебхук MAX: ошибка подписки", e));
 });
