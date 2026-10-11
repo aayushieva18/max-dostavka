@@ -603,6 +603,38 @@ app.get("/api/orders", requireOwner, async (req, res) => {
   res.json(orders);
 });
 
+// Хозяйка переносит текущий заказ в предзаказ на другую дату (например,
+// не успевает или товара нет) — остаток, списанный под этот заказ,
+// возвращается, отметка «собран» снимается. Обратно — обычной кнопкой
+// «Перевести в активные».
+app.post("/api/orders/:id/to-preorder", requireOwner, async (req, res) => {
+  const id = Number(req.params.id);
+  try {
+    const preorderDate = validatePreorderDate((req.body as { preorderDate?: unknown }).preorderDate, 1);
+    const order = await prisma.$transaction(async (tx) => {
+      const existing = await tx.order.findUnique({ where: { id, courierId: req.courierId }, include: { items: true } });
+      if (!existing || (existing.status !== "NEW" && existing.status !== "ON_THE_WAY")) {
+        throw new UserFacingError("Этот заказ уже нельзя перенести");
+      }
+      for (const item of existing.items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { availableQty: { increment: item.quantity } },
+        });
+      }
+      return tx.order.update({
+        where: { id },
+        data: { status: "PREORDER", preorderDate, collected: false },
+      });
+    }, { timeout: 15000 });
+    io.to(courierRoom(req.courierId!)).emit("orders:updated");
+    io.to(courierRoom(req.courierId!)).emit("products:updated");
+    res.json(order);
+  } catch (e) {
+    res.status(400).json({ error: e instanceof UserFacingError ? e.message : "Не удалось перенести заказ" });
+  }
+});
+
 // Предзаказы хозяйки — по дате доставки, ближайшие сверху.
 app.get("/api/orders/preorders", requireOwner, async (req, res) => {
   const orders = await prisma.order.findMany({

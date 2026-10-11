@@ -280,6 +280,12 @@ export const api = {
       { method: "POST" }
     ),
 
+  moveToPreorder: (orderId: number, preorderDate: string) =>
+    ownerRequest<Order>(`/api/orders/${orderId}/to-preorder`, {
+      method: "POST",
+      body: JSON.stringify({ preorderDate }),
+    }),
+
   activatePreordersWeek: () =>
     ownerRequest<{ shortages: { name: string; missing: number }[]; count: number }>(
       "/api/orders/activate-week",

@@ -22,6 +22,9 @@ export function CourierScreen() {
   const [activatingWeek, setActivatingWeek] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [confirmCancelId, setConfirmCancelId] = useState<number | null>(null);
+  // Перенос текущего заказа в предзаказ: открыт ли выбор даты и сама дата.
+  const [movingToPreorder, setMovingToPreorder] = useState(false);
+  const [moveDate, setMoveDate] = useState("");
   const [editingOrder, setEditingOrder] = useState(false);
   const [zoomedImage, setZoomedImage] = useState<string | null>(null);
   const [creatingManualOrder, setCreatingManualOrder] = useState(false);
@@ -248,6 +251,21 @@ export function CourierScreen() {
       showShortages(shortages);
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Не удалось перевести предзаказ");
+    }
+  }
+
+  async function handleMoveToPreorder(orderId: number) {
+    if (!moveDate) {
+      setActionError("Выбери дату предзаказа");
+      return;
+    }
+    try {
+      await api.moveToPreorder(orderId, moveDate);
+      setSelectedOrder(null);
+      setMovingToPreorder(false);
+      setMoveDate("");
+    } catch (e) {
+      setActionError(e instanceof Error ? e.message : "Не удалось перенести заказ");
     }
   }
 
@@ -846,6 +864,8 @@ export function CourierScreen() {
             setSelectedOrder(null);
             setConfirmCancelId(null);
             setEditingOrder(false);
+            setMovingToPreorder(false);
+            setMoveDate("");
           }}
         >
           {editingOrder ? (
@@ -950,6 +970,45 @@ export function CourierScreen() {
                     >
                       Изменить заказ
                     </Button>
+                    {selectedOrder.status !== "PREORDER" &&
+                      (movingToPreorder ? (
+                        <div style={{ marginBottom: 8 }}>
+                          <Muted>
+                            На какую дату перенести? Товар вернётся в остаток и спишется
+                            снова, когда переведёшь предзаказ в активные.
+                          </Muted>
+                          <Input
+                            type="date"
+                            min={chitaDatePlusDays(1)}
+                            value={moveDate}
+                            onChange={(e) => setMoveDate(e.target.value)}
+                            style={{ margin: "8px 0" }}
+                          />
+                          <div className="row">
+                            <Button
+                              variant="secondary"
+                              onClick={() => {
+                                setMovingToPreorder(false);
+                                setMoveDate("");
+                              }}
+                              style={{ flex: 1 }}
+                            >
+                              Не переносить
+                            </Button>
+                            <Button onClick={() => handleMoveToPreorder(selectedOrder.id)} style={{ flex: 1 }}>
+                              Перенести
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="secondary"
+                          onClick={() => setMovingToPreorder(true)}
+                          style={{ width: "100%", marginBottom: 8 }}
+                        >
+                          Перенести в предзаказ
+                        </Button>
+                      ))}
                     <Button
                       variant="secondary"
                       onClick={() => setConfirmCancelId(selectedOrder.id)}
