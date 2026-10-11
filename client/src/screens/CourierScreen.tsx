@@ -39,6 +39,7 @@ export function CourierScreen() {
   const [uploadingImageFor, setUploadingImageFor] = useState<number | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
   const [deliveryFeeDraft, setDeliveryFeeDraft] = useState("");
+  const [singleItemFeeDraft, setSingleItemFeeDraft] = useState("");
   const [savingFee, setSavingFee] = useState(false);
   const [historySearch, setHistorySearch] = useState("");
   const [historyFrom, setHistoryFrom] = useState("");
@@ -56,9 +57,22 @@ export function CourierScreen() {
   async function handleSaveDeliveryFee() {
     setSavingFee(true);
     try {
-      const { deliveryFee } = await api.setDeliveryFee(Number(deliveryFeeDraft) || 0);
-      setMe((prev) => (prev ? { ...prev, deliveryFee } : prev));
+      const fees = await api.setDeliveryFee({ deliveryFee: Number(deliveryFeeDraft) || 0 });
+      setMe((prev) => (prev ? { ...prev, ...fees } : prev));
       setDeliveryFeeDraft("");
+    } finally {
+      setSavingFee(false);
+    }
+  }
+
+  // Пустое поле — убрать отдельную цену для 1 штуки (тогда везде обычная).
+  async function handleSaveSingleItemFee() {
+    setSavingFee(true);
+    try {
+      const value = singleItemFeeDraft.trim();
+      const fees = await api.setDeliveryFee({ singleItemFee: value === "" ? null : Number(value) || 0 });
+      setMe((prev) => (prev ? { ...prev, ...fees } : prev));
+      setSingleItemFeeDraft("");
     } finally {
       setSavingFee(false);
     }
@@ -312,7 +326,7 @@ export function CourierScreen() {
     address: "",
     phone: "",
     comment: null,
-    deliveryFee: me?.deliveryFee ?? 0,
+    deliveryFee: 0,
     lat: 0,
     lon: 0,
     approxLocation: false,
@@ -391,6 +405,27 @@ export function CourierScreen() {
               onChange={(e) => setDeliveryFeeDraft(e.target.value)}
             />
             <Button disabled={savingFee} onClick={handleSaveDeliveryFee}>
+              Сохранить
+            </Button>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <Muted>
+              Если в заказе всего 1 штука:{" "}
+              {me.singleItemFee === null
+                ? "как обычно"
+                : me.singleItemFee === 0
+                ? "бесплатно"
+                : `${me.singleItemFee} ₽`}
+            </Muted>
+          </div>
+          <div className="row" style={{ marginTop: 8 }}>
+            <Input
+              type="number"
+              placeholder="Пусто — как обычно"
+              value={singleItemFeeDraft}
+              onChange={(e) => setSingleItemFeeDraft(e.target.value)}
+            />
+            <Button disabled={savingFee} onClick={handleSaveSingleItemFee}>
               Сохранить
             </Button>
           </div>

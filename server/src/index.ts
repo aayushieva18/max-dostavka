@@ -180,25 +180,36 @@ app.get("/api/me", requireOwner, async (req, res) => {
     slug: courier.slug,
     name: courier.name,
     deliveryFee: courier.deliveryFee,
+    singleItemFee: courier.singleItemFee,
   });
 });
 
-// Курьер меняет свою стоимость доставки (0 — бесплатно). Не трогает уже
-// оформленные заказы — у них своя сохранённая на момент заказа цена.
+// Курьер меняет свою стоимость доставки (0 — бесплатно) и/или отдельную
+// цену для заказа из 1 штуки (null — убрать отдельную цену). Меняется только
+// то, что передано. Не трогает уже оформленные заказы — у них своя
+// сохранённая на момент заказа цена.
 app.post("/api/me/delivery-fee", requireOwner, async (req, res) => {
-  const { deliveryFee } = req.body as { deliveryFee: number };
+  const { deliveryFee, singleItemFee } = req.body as {
+    deliveryFee?: number;
+    singleItemFee?: number | null;
+  };
   const courier = await prisma.courier.update({
     where: { id: req.courierId },
-    data: { deliveryFee: Math.max(0, Math.round(deliveryFee) || 0) },
+    data: {
+      ...(deliveryFee !== undefined ? { deliveryFee: Math.max(0, Math.round(deliveryFee) || 0) } : {}),
+      ...(singleItemFee !== undefined
+        ? { singleItemFee: singleItemFee === null ? null : Math.max(0, Math.round(singleItemFee) || 0) }
+        : {}),
+    },
   });
-  res.json({ deliveryFee: courier.deliveryFee });
+  res.json({ deliveryFee: courier.deliveryFee, singleItemFee: courier.singleItemFee });
 });
 
 // Публичная информация о курьере (название, стоимость доставки) — нужна
 // покупателю в форме заказа, до входа и без пароля.
 app.get("/api/courier", resolveCourierBySlug, async (req, res) => {
   const courier = req.courier!;
-  res.json({ name: courier.name, deliveryFee: courier.deliveryFee });
+  res.json({ name: courier.name, deliveryFee: courier.deliveryFee, singleItemFee: courier.singleItemFee });
 });
 
 // --- Товары и остатки -------------------------------------------------
@@ -326,6 +337,21 @@ app.get("/api/customer-orders/:maxUserId", resolveCourierBySlug, async (req, res
 });
 
 // --- Заказы -------------------------------------------------------------
+
+// Стоимость доставки для конкретного состава заказа: если во всём заказе
+// ровно 1 штука и у курьера задана отдельная цена для этого — она, иначе
+// обычная.
+function totalUnits(items: { quantity: number }[]) {
+  return items.reduce((sum, i) => sum + i.quantity, 0);
+}
+function deliveryFeeFor(
+  courier: { deliveryFee: number; singleItemFee: number | null },
+  items: { quantity: number }[]
+) {
+  return totalUnits(items) === 1 && courier.singleItemFee !== null
+    ? courier.singleItemFee
+    : courier.deliveryFee;
+}
 
 // Предзаказы: покупатель может заказать на дату не раньше чем через
 // PREORDER_MIN_DAYS дней, не глядя на остатки (товар приготовят под
@@ -468,7 +494,7 @@ app.post("/api/orders", resolveCourierBySlug, async (req, res) => {
     const checkedPreorderDate = preorderDate ? validatePreorderDate(preorderDate, PREORDER_MIN_DAYS) : null;
     const result = await prisma.$transaction(
       (tx) =>
-        createOrderInTransaction(tx, courierId, req.courier!.deliveryFee, {
+        createOrderInTransaction(tx, courierId, deliveryFeeFor(req.courier!, items), {
           maxUserId,
           name,
           address,
@@ -522,7 +548,7 @@ app.post("/api/orders/manual", requireOwner, async (req, res) => {
     const checkedPreorderDate = preorderDate ? validatePreorderDate(preorderDate, 1) : null;
     const result = await prisma.$transaction(
       (tx) =>
-        createOrderInTransaction(tx, courierId, req.courier!.deliveryFee, {
+        createOrderInTransaction(tx, courierId, deliveryFeeFor(req.courier!, items), {
           maxUserId,
           name,
           address,
@@ -836,6 +862,16 @@ async function editOrderInTransaction(
   requireMaxUserId?: string
 ) {
   const existing = await loadEditableOrder(tx, id, courierId, requireMaxUserId, "изменить");
+  // Доставку пересчитываем, только если заказ стал «1 штука» или перестал
+  // им быть — иначе оставляем сохранённую цену (курьер мог поменять обычную
+  // цену уже после оформления этого заказа).
+  const wasSingle = totalUnits(existing.items) === 1;
+  const isSingle = totalUnits(data.items) === 1;
+  let deliveryFee = existing.deliveryFee;
+  if (wasSingle !== isSingle) {
+    const courier = await tx.courier.findUniqueOrThrow({ where: { id: courierId } });
+    deliveryFee = deliveryFeeFor(courier, data.items);
+  }
   // У предзаказа остаток не списан — состав меняем свободно, без пересчёта.
   const isPreorder = existing.status === "PREORDER";
   if (isPreorder) await validatePreorderItems(tx, courierId, data.items);
@@ -887,6 +923,7 @@ async function editOrderInTransaction(
       lat: data.lat,
       lon: data.lon,
       approxLocation: data.approxLocation ?? false,
+      deliveryFee,
       ...(isPreorder && data.preorderDate ? { preorderDate: data.preorderDate } : {}),
       items: { create: data.items },
     },

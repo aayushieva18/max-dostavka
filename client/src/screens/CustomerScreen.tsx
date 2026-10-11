@@ -154,6 +154,13 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   }, [activeOrder]);
 
   const totalItems = Object.values(quantities).filter((q) => q > 0).length;
+  // Те же правила, что на сервере (deliveryFeeFor): ровно 1 штука во всём
+  // заказе — отдельная цена, если она задана, иначе обычная.
+  const totalUnits = Object.values(quantities).reduce((sum, q) => sum + q, 0);
+  const currentDeliveryFee =
+    courierInfo && totalUnits === 1 && courierInfo.singleItemFee !== null
+      ? courierInfo.singleItemFee
+      : courierInfo?.deliveryFee ?? 0;
   const hasCurrentOrder = !!activeOrder && activeOrder.status !== "PICKED_UP";
   // При текущем заказе форма открывается только для предзаказа.
   const preorderMode = isPreorder || hasCurrentOrder;
@@ -380,10 +387,10 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
 
       {courierInfo && (
         <Muted>
-          Доставка:{" "}
-          {courierInfo.deliveryFee === 0
-            ? "бесплатно"
-            : `${courierInfo.deliveryFee} ₽`}
+          Доставка: {formatFee(currentDeliveryFee)}
+          {courierInfo.singleItemFee !== null &&
+            courierInfo.singleItemFee !== courierInfo.deliveryFee &&
+            ` (если в заказе 1 штука — ${formatFee(courierInfo.singleItemFee)}, от 2 штук — ${formatFee(courierInfo.deliveryFee)})`}
         </Muted>
       )}
 
@@ -481,8 +488,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
               : "Статус: заказ оформлен, ждём подтверждения от курьера"}
           </p>
           <p style={{ margin: "0 0 12px" }}>
-            Доставка:{" "}
-            {activeOrder.deliveryFee === 0 ? "бесплатно" : `${activeOrder.deliveryFee} ₽`}
+            Доставка: {formatFee(activeOrder.deliveryFee)}
           </p>
           {activeOrder.comment && (
             <p style={{ margin: "0 0 12px" }}>Комментарий: {activeOrder.comment}</p>
@@ -617,4 +623,8 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
       {error && <ErrorBanner onClose={() => setError(null)}>{error}</ErrorBanner>}
     </Screen>
   );
+}
+
+function formatFee(fee: number) {
+  return fee === 0 ? "бесплатно" : `${fee} ₽`;
 }

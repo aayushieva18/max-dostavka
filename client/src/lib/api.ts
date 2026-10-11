@@ -52,8 +52,10 @@ export type Order = {
   items: OrderItem[];
 };
 
-export type Me = { id: number; slug: string; name: string; deliveryFee: number };
-export type CourierInfo = { name: string; deliveryFee: number };
+// singleItemFee — отдельная цена доставки, если во всём заказе 1 штука
+// (null — отдельной цены нет).
+export type Me = { id: number; slug: string; name: string; deliveryFee: number; singleItemFee: number | null };
+export type CourierInfo = { name: string; deliveryFee: number; singleItemFee: number | null };
 
 // Ошибка запроса к серверу с приложенным HTTP-статусом — по нему экраны
 // отличают "магазин временно недоступен" (403, курьер с истёкшим сроком) от
@@ -99,10 +101,10 @@ async function ownerRequest<T>(path: string, options?: RequestInit): Promise<T> 
 export const api = {
   getMe: () => ownerRequest<Me>("/api/me"),
 
-  setDeliveryFee: (deliveryFee: number) =>
-    ownerRequest<{ deliveryFee: number }>("/api/me/delivery-fee", {
+  setDeliveryFee: (fees: { deliveryFee?: number; singleItemFee?: number | null }) =>
+    ownerRequest<{ deliveryFee: number; singleItemFee: number | null }>("/api/me/delivery-fee", {
       method: "POST",
-      body: JSON.stringify({ deliveryFee }),
+      body: JSON.stringify(fees),
     }),
 
   getCourierInfo: (courierSlug: string) =>
