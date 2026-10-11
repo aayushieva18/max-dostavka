@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError, type CourierInfo, type Order, type Product } from "../lib/api";
+import { api, ApiError, withRetry, type CourierInfo, type Order, type Product } from "../lib/api";
 import { socket, connectAsCustomer } from "../lib/socket";
 import {
   getMaxUserFirstName,
@@ -42,6 +42,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [etaMinutes, setEtaMinutes] = useState<number | null>(null);
   const [storeDisabled, setStoreDisabled] = useState(false);
+  const [productsLoading, setProductsLoading] = useState(true);
   const [orderHistory, setOrderHistory] = useState<Order[]>([]);
   const [cancelling, setCancelling] = useState(false);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
@@ -113,17 +114,27 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
     };
   }, [courierSlug]);
 
+  // Сервер на бесплатном тарифе засыпает без посетителей и просыпается до
+  // минуты, плюс в сёлах бывает слабый интернет — поэтому первую загрузку
+  // повторяем несколько раз, а ошибку показываем, только если не вышло
+  // совсем. 403 — магазин отключён, повторять бессмысленно.
   useEffect(() => {
-    api.getCourierInfo(courierSlug).then(setCourierInfo).catch((e) => {
-      if (e instanceof ApiError && e.status === 403) setStoreDisabled(true);
-    });
+    withRetry(() => api.getCourierInfo(courierSlug))
+      .then(setCourierInfo)
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setStoreDisabled(true);
+      });
   }, [courierSlug]);
 
   useEffect(() => {
-    api.getProducts(courierSlug).then(setProducts).catch((e) => {
-      if (e instanceof ApiError && e.status === 403) setStoreDisabled(true);
-      else setError("Не получилось загрузить список товаров");
-    });
+    setProductsLoading(true);
+    withRetry(() => api.getProducts(courierSlug))
+      .then(setProducts)
+      .catch((e) => {
+        if (e instanceof ApiError && e.status === 403) setStoreDisabled(true);
+        else setError("Не получилось загрузить список товаров — проверь интернет и открой приложение заново");
+      })
+      .finally(() => setProductsLoading(false));
     const reload = () => api.getProducts(courierSlug).then(setProducts).catch(() => {});
     socket.on("products:updated", reload);
     return () => {
@@ -345,7 +356,9 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
         </>
       )}
 
-      {products.length === 0 ? (
+      {productsLoading && products.length === 0 ? (
+        <Muted>Загружаем товары, подождите…</Muted>
+      ) : products.length === 0 ? (
         <Muted>Пока нет доступных товаров</Muted>
       ) : (
         products.map((product) => (

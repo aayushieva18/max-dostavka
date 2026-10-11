@@ -99,13 +99,52 @@ type RawGeocodeResult = Omit<GeocodeResult, "approximate">;
 // в другую сторону). Используется только в самом крайнем случае (см. фолбэк
 // ниже, когда даже улица не находится) — при обычном полном адресе со
 // найденной улицей эта подмена не нужна, геокодер и так находит верное место.
+//
+// Сюда же — сёла, которые геокодеры не находят вовсе (Нижний и Верхний
+// Цасучей, Ононский округ, 2026-10-11 — координаты центра села из Википедии).
+// Ключ — название после normalizeSettlementName (строчными, без "с.", с
+// раскрытыми "Н."/"В." → "нижний"/"верхний").
 const KNOWN_SETTLEMENT_OVERRIDES: Record<string, { lat: number; lon: number; label: string }> = {
   могойтуй: {
     lat: 51.2831177,
     lon: 114.9299468,
     label: "Могойтуй, Забайкальский край (районный центр Агинского округа)",
   },
+  "нижний цасучей": {
+    lat: 50.50833,
+    lon: 115.12361,
+    label: "Нижний Цасучей, Забайкальский край (Ононский округ)",
+  },
+  "верхний цасучей": {
+    lat: 50.50972,
+    lon: 115.0875,
+    label: "Верхний Цасучей, Забайкальский край (Ононский округ)",
+  },
 };
+
+// Расстояние между двумя точками по прямой, в км (с запасом точно для
+// проверки "рядом с селом или нет").
+function distanceKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }): number {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLon = (b.lon - a.lon) * rad;
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371 * Math.asin(Math.sqrt(h));
+}
+
+// "с. Н.Цасучей", "Ниж. Цасучей", "нижний  цасучей" → "нижний цасучей" —
+// люди пишут название села по-разному.
+function normalizeSettlementName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/ё/g, "е")
+    .replace(/^(с\.|село|пгт\.?|п\.|пос\.|поселок)\s*/, "")
+    .replace(/^(н|ниж|нижн)\.\s*/, "нижний ")
+    .replace(/^(в|верх|верхн)\.\s*/, "верхний ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 // Переводит текстовый адрес в координаты и разбирает его на понятные части.
 // Сначала пробует по-человечески развёрнутый адрес через Яндекс Карты (жёстко
@@ -121,19 +160,25 @@ const KNOWN_SETTLEMENT_OVERRIDES: Record<string, { lat: number; lon: number; lab
 export async function geocodeAddress(address: string): Promise<GeocodeResult | null> {
   const normalized = normalizeForGeocoding(address);
   const candidates = normalized === address.trim() ? [address] : [normalized, address];
+  const { settlement } = splitAddress(address);
+  const known = settlement.trim() ? KNOWN_SETTLEMENT_OVERRIDES[normalizeSettlementName(settlement)] : undefined;
+  // Если село из списка известных, а геокодер нашёл улицу далеко от него
+  // (например, такую же улицу в Чите, потому что самого села он не знает),
+  // такой результат не годится — лучше центр села.
+  const isPlausible = (r: RawGeocodeResult) => !known || distanceKm(r, known) <= 15;
 
   for (const candidate of candidates) {
     const viaYandex = await geocodeWithYandex(candidate).catch((e) => {
       console.error("Яндекс.Геокодер: ошибка запроса", e);
       return null;
     });
-    if (viaYandex) return { ...viaYandex, approximate: false };
+    if (viaYandex && isPlausible(viaYandex)) return { ...viaYandex, approximate: false };
 
     const viaNominatim = await geocodeWithNominatim(candidate).catch((e) => {
       console.error("OpenStreetMap: ошибка запроса", e);
       return null;
     });
-    if (viaNominatim) return { ...viaNominatim, approximate: false };
+    if (viaNominatim && isPlausible(viaNominatim)) return { ...viaNominatim, approximate: false };
   }
 
   // Маленькие сёла (Дульдурга, Кункур, Южный Аргалей, Ага-Хангил и похожие)
@@ -145,9 +190,7 @@ export async function geocodeAddress(address: string): Promise<GeocodeResult | n
   // Помечаем такой результат approximate — если в одном селе окажется
   // несколько таких заказов, все точки лягут в одно место на карте, и
   // хозяйке нужно будет отличать их не по карте, а по списку.
-  const { settlement } = splitAddress(address);
   if (settlement.trim()) {
-    const known = KNOWN_SETTLEMENT_OVERRIDES[settlement.trim().toLowerCase()];
     if (known) {
       return { lat: known.lat, lon: known.lon, addressLine: known.label, hasLocality: true, approximate: true };
     }

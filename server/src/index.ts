@@ -182,6 +182,11 @@ async function resolveCourierBySlug(req: express.Request, res: express.Response,
   next();
 }
 
+// Для keepAwake — просто «я жив».
+app.get("/api/ping", (_req, res) => {
+  res.json({ ok: true });
+});
+
 // Данные о самом курьере (свой slug/название) — нужно клиенту, чтобы знать,
 // в какую "комнату" сокета подключаться, и что показать в шапке экрана.
 app.get("/api/me", requireOwner, async (req, res) => {
@@ -1273,4 +1278,19 @@ const PORT = Number(process.env.PORT) || 3001;
 httpServer.listen(PORT, () => {
   console.log(`Сервер доставки запущен: http://localhost:${PORT}`);
   ensureBotWebhook().catch((e) => console.error("Вебхук MAX: ошибка подписки", e));
+  keepAwake();
 });
+
+// Бесплатный сервер Render засыпает, если к нему 15 минут никто не
+// обращался, и потом просыпается до минуты — первый покупатель в это время
+// видел ошибку загрузки товаров, а события бота MAX могли не дойти. Раз в
+// 10 минут сервер сам обращается к себе по внешнему адресу — для Render это
+// обычный посетитель. Лимита бесплатных часов (750 в месяц) хватает на
+// один сервер круглосуточно.
+function keepAwake() {
+  const baseUrl = process.env.RENDER_EXTERNAL_URL;
+  if (!baseUrl) return;
+  setInterval(() => {
+    fetch(`${baseUrl.replace(/\/$/, "")}/api/ping`).catch(() => {});
+  }, 10 * 60 * 1000);
+}

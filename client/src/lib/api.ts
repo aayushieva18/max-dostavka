@@ -94,6 +94,21 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 // То же самое, но с паролем хозяйки — для запросов, которые видят/меняют
 // данные заказов и товаров (не для обычной формы заказа покупателя).
+// Повторяет запрос при сбое сети или ответе 5xx (сервер ещё просыпается) —
+// всего около минуты ожидания. Ошибки 4xx (например, 403 «магазин
+// отключён») не повторяет — от повтора они не исчезнут.
+export async function withRetry<T>(fn: () => Promise<T>, delaysMs = [2000, 4000, 8000, 15000, 30000]): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      const clientError = e instanceof ApiError && e.status >= 400 && e.status < 500;
+      if (clientError || attempt >= delaysMs.length) throw e;
+      await new Promise((resolve) => setTimeout(resolve, delaysMs[attempt]));
+    }
+  }
+}
+
 async function ownerRequest<T>(path: string, options?: RequestInit): Promise<T> {
   const res = await fetch(`${SERVER_URL}${path}`, {
     ...options,
