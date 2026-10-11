@@ -470,6 +470,21 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
         </Card>
       ) : activeOrder && activeOrder.status !== "PICKED_UP" ? (
         <Card title="Твой заказ оформлен">
+          {activeOrder.status === "NEW" && (
+            <p
+              style={{
+                margin: "0 0 12px",
+                padding: 12,
+                borderRadius: 8,
+                background: "#dcfce7",
+                color: "#166534",
+                fontWeight: 600,
+              }}
+            >
+              ✅ Вы успешно оформили заказ! Мы отправили его курьеру — скоро он
+              его подтвердит.
+            </p>
+          )}
           <MapView
             center={[activeOrder.lat, activeOrder.lon]}
             markers={[
@@ -498,7 +513,7 @@ export function CustomerScreen({ courierSlug, maxUserId }: Props) {
               ? etaMinutes !== null
                 ? `Спасибо за заказ! Уже везём, прибудем примерно через ${etaMinutes} мин.`
                 : "Спасибо за заказ! Уже готовим и привезём в ближайшее время."
-              : "Статус: заказ оформлен, ждём подтверждения от курьера"}
+              : "Статус: ждём подтверждения от курьера"}
           </p>
           <p style={{ margin: "0 0 12px" }}>
             Доставка: {formatFee(activeOrder.deliveryFee)}

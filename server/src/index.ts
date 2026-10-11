@@ -487,7 +487,9 @@ async function createOrderInTransaction(
       ...(data.preorderDate ? { status: "PREORDER" as const, preorderDate: data.preorderDate } : {}),
       items: { create: data.items },
     },
-    include: { items: true },
+    // С названиями товаров — покупатель сразу показывает свой заказ в
+    // «Моих заказах»; без product экран покупателя падал (белый экран).
+    include: { items: { include: { product: true } } },
   });
 }
 
